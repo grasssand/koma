@@ -7,6 +7,7 @@ from tkinter import messagebox, ttk
 
 from send2trash import send2trash
 
+from koma.config import FONT_SIZE
 from koma.core import Deduplicator
 from koma.ui.utils import get_sans_font
 from koma.utils import logger
@@ -48,7 +49,7 @@ class DedupeWindow(tk.Toplevel):
         )
 
         style = ttk.Style(self)
-        style.configure("Treeview", font=(get_sans_font(), 9))
+        style.configure("Treeview", font=(get_sans_font(), FONT_SIZE))
 
         columns = ("check", "name", "mtime", "size", "path")
         self.tree = ttk.Treeview(
@@ -115,7 +116,11 @@ class DedupeWindow(tk.Toplevel):
         for key, items in self.results.items():
             group_text = f"📂 {key} ({len(items)} 个文件)"
             parent_id = self.tree.insert(
-                "", "end", values=("", group_text, "", "", ""), open=True
+                "",
+                "end",
+                values=("", group_text, "", "", ""),
+                open=True,
+                tags=("file",),
             )
 
             for item in items:
@@ -140,10 +145,9 @@ class DedupeWindow(tk.Toplevel):
                         size_mb,
                         str(path),
                     ),
-                    tags=("file",),
                 )
 
-        self.tree.tag_configure("file", background="#ffffff")
+        self.tree.tag_configure("file", background="#e8f4ff")
 
     def get_total_size(self, path: Path) -> int:
         """如果是文件直接返回大小，如果是文件夹则递归计算总大小"""
