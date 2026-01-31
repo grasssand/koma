@@ -29,6 +29,8 @@ DEFAULT_TOML_CONTENT = """# ==========================================
 # 线程并发数
 # 设置为 0 则自动使用 CPU 核心数的 75%
 max_workers = 0
+# 文件列表字体大小
+font_size = 10
 
 [converter]
 # 转换格式，可选: "avif (svt)", "avif (aom)", "webp", "jxl"
@@ -109,6 +111,7 @@ def find_config_path() -> Path:
 @dataclass
 class AppConfig:
     max_workers: int = 0
+    font_size: int = 10
 
     @property
     def actual_workers(self) -> int:
@@ -223,6 +226,7 @@ def load_config() -> GlobalConfig:
 _cfg = load_config()
 
 MAX_WORKERS = _cfg.app.actual_workers
+FONT_SIZE = _cfg.app.font_size
 
 CONVERTER_CFG = {
     "format": _cfg.converter.format,

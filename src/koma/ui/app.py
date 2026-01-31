@@ -10,7 +10,7 @@ from tkinter import filedialog, messagebox, scrolledtext, ttk
 from send2trash import send2trash
 
 import koma
-from koma.config import CONVERTER_CFG, ENABLE_AD_SCAN, OUTPUT_FORMATS
+from koma.config import CONVERTER_CFG, ENABLE_AD_SCAN, FONT_SIZE, OUTPUT_FORMATS
 from koma.core import Converter, Renamer, Scanner
 from koma.ui.dedupe import DedupeWindow
 from koma.ui.utils import get_monospace_font, get_sans_font
@@ -94,7 +94,10 @@ class KomaGUI:
         log_frame = ttk.LabelFrame(self.root, text="运行日志", padding=5)
         log_frame.pack(fill="x", side="bottom", padx=10, pady=5)
         self.log_text = scrolledtext.ScrolledText(
-            log_frame, height=8, state="disabled", font=(get_monospace_font(), 9)
+            log_frame,
+            height=8,
+            state="disabled",
+            font=(get_monospace_font(), 9),
         )
         self.log_text.pack(fill="both", expand=True)
 
@@ -133,6 +136,9 @@ class KomaGUI:
             frame, text="杂项文件（双击打开文件位置）", padding=10
         )
         list_frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+
+        style = ttk.Style()
+        style.configure("Treeview", font=(get_sans_font(), FONT_SIZE))
 
         columns = ("type", "name", "ext", "folder", "abspath")
         self.tree_clean = ttk.Treeview(
