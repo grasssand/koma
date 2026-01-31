@@ -174,7 +174,7 @@ class Converter:
         with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
             for root, result in scanner_generator:
                 logger.info("")
-                logger.info(f"📂 {self.input_dir}")
+                logger.info(f"📂 {root}")
                 logger.info("-" * 105)
                 logger.info(
                     f"{'File':<40} | {'Original':>10} | {'Output':>10} | {'Ratio':>10} | {'Status':<10}"
