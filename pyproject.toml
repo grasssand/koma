@@ -1,7 +1,7 @@
 [project]
 name = "Koma"
-version = "0.1.0"
-description = "漫画整理工具箱。"
+version = "0.2.0"
+description = "Manga Organization Toolbox."
 readme = "README.md"
 authors = [
     { name = "GrassSand", email = "grasssand@users.noreply.github.com" }
@@ -60,3 +60,11 @@ omit = [
     "src/koma/ui/*",
     "src/koma/utils/logger.py"
 ]
+
+[tool.commitizen]
+name = "cz_conventional_commits"
+tag_format = "v$version"
+version_scheme = "pep440"
+version_provider = "uv"
+update_changelog_on_bump = true
+major_version_zero = true
