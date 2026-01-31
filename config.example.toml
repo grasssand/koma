@@ -1,0 +1,54 @@
+# ==========================================
+# KOMA 工具箱配置文件
+# ==========================================
+
+[app]
+# 线程并发数
+# 设置为 0 则自动使用 CPU 核心数的 75%
+max_workers = 0
+
+[converter]
+# 转换格式，可选: "avif (svt)", "avif (aom)", "webp", "jxl"
+format = "avif (svt)"
+# 质量 (1-100)
+quality = 75
+# 无损模式
+lossless = false
+
+[extensions]
+# 需要转换的格式
+convert = [
+    ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tif", ".tiff"
+]
+# 直接复制的格式
+passthrough = [
+    ".avif", ".webp", ".jxl", ".heic"
+]
+# 归档文件格式
+archive = [
+    ".zip", ".cbz", ".rar", ".cbr", ".7z", ".cb7", ".pdf", ".epub",
+    ".tar", ".cbt", ".gz", ".tgz", ".bz2", ".tbz2", ".xz", ".txz", ".zst",
+]
+
+[scanner]
+# 是否开启广告扫描
+enable_ad_scan = false
+# 二维码白名单 (包含这些域名的二维码不视为广告)
+qr_whitelist = [
+    "x.com",
+    "twitter.com",
+    "pixiv.net",
+    "fanbox.cc",
+    "fantia.jp",
+    "dlsite.com",
+    "dmm.co.jp",
+    "melonbooks.co.jp",
+    "booth.pm",
+    "patreon.com",
+    "ko-fi.com",
+    "qq.com",
+    "weibo.com",
+    "bilibili.com",
+    "youtube.com",
+    "instagram.com"
+]

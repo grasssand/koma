@@ -1,0 +1,62 @@
+[project]
+name = "Koma"
+version = "0.1.0"
+description = "漫画整理工具箱。"
+readme = "README.md"
+authors = [
+    { name = "GrassSand", email = "grasssand@users.noreply.github.com" }
+]
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.12"
+keywords = ["comic", "manga", "tool"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Utilities"
+]
+dependencies = [
+    "natsort>=8.4.0",
+    "opencv-contrib-python-headless>=4.13.0.90",
+    "pillow>=12.1.0",
+    "send2trash>=2.1.0",
+]
+
+[dependency-groups]
+dev = [
+    "pyinstaller>=6.18.0",
+    "pytest>=9.0.2",
+    "pytest-cov>=7.0.0",
+    "pytest-mock>=3.15.1",
+]
+
+[project.scripts]
+koma = "koma.main:main"
+
+[project.urls]
+Homepage = "https://github.com/grasssand/koma"
+Repository = "https://github.com/grasssand/koma"
+"Bug Tracker" = "https://github.com/grasssand/koma/issues"
+
+[build-system]
+requires = ["uv_build>=0.9.27,<0.10.0"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+addopts = "--cov=koma --color=yes --cov-report=term-missing --cov-report=html"
+pythonpath = "src"
+testpaths = "tests"
+
+[tool.coverage.run]
+omit = [
+    "src/koma/main.py",
+    "src/koma/__init__.py",
+    "src/koma/ui/*",
+    "src/koma/utils/logger.py"
+]
