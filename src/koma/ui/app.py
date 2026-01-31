@@ -9,6 +9,7 @@ from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 from send2trash import send2trash
 
+import koma
 from koma.config import CONVERTER_CFG, ENABLE_AD_SCAN, OUTPUT_FORMATS
 from koma.core import Converter, Renamer, Scanner
 from koma.ui.dedupe import DedupeWindow
@@ -35,7 +36,7 @@ class TextHandler(logging.Handler):
 class KomaGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("KOMA - 漫画工具箱")
+        self.root.title(f"KOMA - 漫画工具箱 v{koma.__version__}")
         self.root.geometry("920x680")
 
         if not shutil.which("ffmpeg"):
