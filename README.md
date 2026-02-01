@@ -7,7 +7,7 @@ KOMA 是一个专为本地漫画/同人本收藏者设计的整理工具。集�
 
 #### 1. 🧹 扫描清理
 - **去广告**：集成 WeChatQRCode，能精准识别并剔除漫画尾部的广告二维码。
-- **杂项清理**: 动识别并清理 .url, .txt, Thumbs.db 等非图片文件。
+- **杂项清理**: 自动识别并清理 .url, .txt, Thumbs.db 等非图片文件。
 
 #### 2. 🛠️ 重命名
 - 将文件夹内图片按自然顺序重命名为 `000, 001, 002, ...`
@@ -25,6 +25,9 @@ KOMA 是一个专为本地漫画/同人本收藏者设计的整理工具。集�
 #### 4. 📚 归档查重
 - 支持扫描多个文件夹及归档包
 - 识别提取 `(展会) [社团 (作者)] 作品 (系列) [语言]...`等信息，找出重复文件。
+
+#### 5. 📖 合集装订
+- 将多个图片、存档、文件夹排序并重命名到单个新文件夹
 
 ### 💻 环境要求
 - **FFmpeg**: 安装并添加到系统环境变量 PATH 中，或放在 `Koma.exe` 旁。
@@ -72,4 +75,4 @@ uv run pyinstaller build.spec
 ```
 
 ### 📄 开源协议
-本项目采用 [MIT License](./LICENSE) 开源。二维码识别模型来自 [WeChatCV/opencv_3rdparty](https://github.com/WeChatCV/opencv_3rdparty)，遵循其各自协议。
+本项目采用 [MIT License](./LICENSE) 开源，二维码识别模型来自 [WeChatCV/opencv_3rdparty](https://github.com/WeChatCV/opencv_3rdparty)，7-Zip (7z.exe, 7z.dll) 来自 [www.7-zip.org](https://www.7-zip.org/) 遵循其各自协议。

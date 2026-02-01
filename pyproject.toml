@@ -48,6 +48,14 @@ Repository = "https://github.com/grasssand/koma"
 requires = ["uv_build>=0.9.27,<0.10.0"]
 build-backend = "uv_build"
 
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "U", "C4", "B"]
+ignore = ["E501"]
+
 [tool.pytest.ini_options]
 addopts = "--cov=koma --color=yes --cov-report=term-missing --cov-report=html"
 pythonpath = "src"

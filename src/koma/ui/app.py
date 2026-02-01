@@ -12,7 +12,8 @@ from send2trash import send2trash
 import koma
 from koma.config import CONVERTER_CFG, ENABLE_AD_SCAN, FONT_SIZE, OUTPUT_FORMATS
 from koma.core import Converter, Renamer, Scanner
-from koma.ui.dedupe import DedupeWindow
+from koma.ui.binder_frame import BinderFrame
+from koma.ui.dedupe_window import DedupeWindow
 from koma.ui.utils import get_monospace_font, get_sans_font
 from koma.utils import logger
 
@@ -79,16 +80,21 @@ class KomaGUI:
         self.tab_rename = ttk.Frame(self.notebook)
         self.tab_convert = ttk.Frame(self.notebook)
         self.tab_dedupe = ttk.Frame(self.notebook)
+        self.tab_bind = BinderFrame(self.notebook)
 
         self.notebook.add(self.tab_clean, text=" 🧹 扫描清理 ")
         self.notebook.add(self.tab_rename, text=" ⚒️ 重命名 ")
         self.notebook.add(self.tab_convert, text=" 🎨 格式转换 ")
         self.notebook.add(self.tab_dedupe, text=" 📚 归档查重 ")
+        self.notebook.add(self.tab_bind, text=" 📖 合集装订 ")
 
         self.setup_clean_tab()
         self.setup_rename_tab()
         self.setup_convert_tab()
         self.setup_dedupe_tab()
+        self.setup_bind_tab()
+
+        self.tab_bind.set_status_callback(self.update_status)
 
         self.setup_statusbar()
         log_frame = ttk.LabelFrame(self.root, text="运行日志", padding=5)
@@ -132,9 +138,7 @@ class KomaGUI:
         )
         self.btn_scan.pack(side="right", padx=5)
 
-        list_frame = ttk.LabelFrame(
-            frame, text="杂项文件（双击打开文件位置）", padding=10
-        )
+        list_frame = ttk.LabelFrame(frame, text="杂项文件（双击打开文件）", padding=10)
         list_frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
 
         style = ttk.Style()
@@ -205,7 +209,7 @@ class KomaGUI:
         ).pack(side="left", padx=(5, 0))
 
         self.btn_rename = ttk.Button(
-            frame, text="执行重命名整理", command=self.start_rename
+            frame, text="🎯 开始重命名", command=self.start_rename
         )
         self.btn_rename.pack(side="top", fill="x", padx=40, pady=30, ipady=5)
 
@@ -220,7 +224,7 @@ class KomaGUI:
         ttk.Entry(grp_path, textvariable=self.input_path_var).grid(
             row=0, column=1, sticky="ew", padx=5
         )
-        ttk.Button(grp_path, text="浏览", command=self.select_convert_input).grid(
+        ttk.Button(grp_path, text="选择...", command=self.select_convert_input).grid(
             row=0, column=2
         )
 
@@ -231,7 +235,9 @@ class KomaGUI:
             row=1, column=1, sticky="ew", padx=5, pady=5
         )
         ttk.Button(
-            grp_path, text="浏览", command=lambda: self.select_dir(self.output_path_var)
+            grp_path,
+            text="选择...",
+            command=lambda: self.select_dir(self.output_path_var),
         ).grid(row=1, column=2)
 
         ttk.Checkbutton(
@@ -289,7 +295,7 @@ class KomaGUI:
         self.chk_lossless.pack(side="left")
 
         self.btn_convert = ttk.Button(
-            frame, text="开始转换", command=self.start_convert
+            frame, text="🔁 开始转换", command=self.start_convert
         )
         self.btn_convert.pack(fill="x", padx=20, pady=20, ipady=5)
 
@@ -471,15 +477,17 @@ class KomaGUI:
                 root_path, enable_ad_detection=self.clean_ad_scan_var.get()
             ).run()
 
-            for root, result in scanner:
+            for _, result in scanner:
                 if result.ads:
                     for f in result.ads:
-                        self.root.after(0, lambda f=f: self._add_tree_item("广告", f))
+                        self.root.after(0, lambda f=f: self._add_tree_item("广告图", f))
                         count_ad += 1
 
                 if hasattr(result, "junk") and result.junk:
                     for f in result.junk:
-                        self.root.after(0, lambda f=f: self._add_tree_item("杂项", f))
+                        self.root.after(
+                            0, lambda f=f: self._add_tree_item("杂项文件", f)
+                        )
                         count_junk += 1
 
             msg = f"扫描完成: 发现 {count_ad} 个疑似广告图片, {count_junk} 个杂项。"
@@ -508,7 +516,7 @@ class KomaGUI:
         item = self.tree_clean.selection()
         if not item:
             return
-        file_path = self.tree_clean.item(item[0], "values")[3]
+        file_path = self.tree_clean.item(item[0], "values")[4]
         try:
             if os.name == "nt":
                 os.startfile(file_path)
@@ -649,3 +657,6 @@ class KomaGUI:
         except Exception as e:
             logger.error(f"无法启动查重窗口: {e}")
             messagebox.showerror("错误", f"启动失败: {e}")
+
+    def setup_bind_tab(self):
+        pass
