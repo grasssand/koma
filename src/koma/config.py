@@ -26,13 +26,15 @@ DEFAULT_TOML_CONTENT = """# ==========================================
 # ==========================================
 
 [app]
-# 线程并发数
-# 设置为 0 则自动使用 CPU 核心数的 75%
-max_workers = 0
-# 文件列表字体大小
+# 文件列表字体
+font = "Noto Sans SC"
+# 文件列表字体大小（整数）
 font_size = 10
 
 [converter]
+# 线程并发数
+# 设置为 0 则自动使用 CPU 核心数的 75%
+max_workers = 0
 # 转换格式，可选: "avif (svt)", "avif (aom)", "webp", "jxl"
 format = "avif (svt)"
 # 质量 (1-100)
@@ -110,24 +112,26 @@ def find_config_path() -> Path:
 
 @dataclass
 class AppConfig:
-    max_workers: int = 0
+    font: str = "Noto Sans SC"
     font_size: int = 10
 
-    @property
-    def actual_workers(self) -> int:
-        if self.max_workers > 0:
-            return self.max_workers
-        count = os.cpu_count() or 4
-        return max(1, int(count * 0.75))
+    def __post_init__(self):
+        if self.font_size <= 0 or not isinstance(self.font_size, int):
+            print(f"⚠️ 配置警告: font_size '{self.font_size}' 无效，重置为 10")
+            self.font_size = 10
 
 
 @dataclass
 class ConverterConfig:
+    max_workers: int = 0
     format: str = "avif (svt)"
     quality: int = 75
     lossless: bool = False
 
     def __post_init__(self):
+        if self.max_workers <= 0:
+            count = os.cpu_count() or 4
+            self.max_workers = max(1, int(count * 0.75))
         if self.format not in OUTPUT_FORMATS:
             print(f"⚠️ 配置警告: 不支持格式 '{self.format}'，重置为 'avif (svt)'")
             self.format = "avif (svt)"
@@ -211,23 +215,36 @@ def load_config() -> GlobalConfig:
         try:
             with open(toml_path, "rb") as f:
                 user_data = tomllib.load(f)
+
+            # 配置迁移
+            app_data = user_data.get("app", {})
+            converter_data = user_data.setdefault("converter", {})
+            if "max_workers" in app_data:
+                old_val = app_data.pop("max_workers")
+                if converter_data.get("max_workers", 0) == 0:
+                    converter_data["max_workers"] = old_val
+
+            user_data["app"] = app_data
             print(f"✅ 已加载配置文件: {toml_path}")
         except Exception as e:
             print(f"❌ 配置文件加载失败: {e}，将使用默认值")
 
-    return GlobalConfig(
+    cfg = GlobalConfig(
         app=AppConfig(**user_data.get("app", {})),
         converter=ConverterConfig(**user_data.get("converter", {})),
         extensions=ExtensionsConfig(**user_data.get("extensions", {})),
         scanner=ScannerConfig(**user_data.get("scanner", {})),
     )
 
+    return cfg
+
 
 _cfg = load_config()
 
-MAX_WORKERS = _cfg.app.actual_workers
+FONT = _cfg.app.font
 FONT_SIZE = _cfg.app.font_size
 
+MAX_WORKERS = _cfg.converter.max_workers
 CONVERTER_CFG = {
     "format": _cfg.converter.format,
     "quality": _cfg.converter.quality,

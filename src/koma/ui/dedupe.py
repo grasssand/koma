@@ -48,8 +48,8 @@ class DedupeWindow(tk.Toplevel):
             side="right", padx=10
         )
 
-        style = ttk.Style(self)
-        style.configure("Treeview", font=(get_sans_font(), FONT_SIZE))
+        # style = ttk.Style(self)
+        # style.configure("Treeview", font=(get_sans_font(), FONT_SIZE))
 
         columns = ("check", "name", "mtime", "size", "path")
         self.tree = ttk.Treeview(
@@ -78,6 +78,11 @@ class DedupeWindow(tk.Toplevel):
         self.tree.bind("<Button-1>", self.on_click)
         # 双击：打开文件所在文件夹
         self.tree.bind("<Double-1>", self.on_double_click)
+
+        self.tree.tag_configure(
+            "summary", background="#e8f4ff", font=(get_sans_font(), FONT_SIZE, "bold")
+        )
+        self.tree.tag_configure("file", font=(get_sans_font(), FONT_SIZE))
 
     def _start_scan(self):
         """执行扫描逻辑"""
@@ -120,7 +125,7 @@ class DedupeWindow(tk.Toplevel):
                 "end",
                 values=("", group_text, "", "", ""),
                 open=True,
-                tags=("file",),
+                tags=("summary",),
             )
 
             for item in items:
@@ -145,9 +150,8 @@ class DedupeWindow(tk.Toplevel):
                         size_mb,
                         str(path),
                     ),
+                    tags=("file",),
                 )
-
-        self.tree.tag_configure("file", background="#e8f4ff")
 
     def get_total_size(self, path: Path) -> int:
         """如果是文件直接返回大小，如果是文件夹则递归计算总大小"""

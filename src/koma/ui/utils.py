@@ -1,17 +1,20 @@
 import tkinter.font as tkfont
 
+from koma.config import FONT
 
-def get_sans_font():
+
+def get_sans_font() -> str:
     """获取系统无衬线字体名称"""
     available_fonts = set(tkfont.families())
-    preferred_fonts = [
+    preferred_fonts = {
+        FONT,  # 首选用户配置字体
         "Noto Sans CJK SC",
         "Source Han Sans CN",
         "微软雅黑",  # Windows
         "Helvetica",  # macOS
         "Noto Sans",
         "Liberation Sans",
-    ]
+    }
     for font in preferred_fonts:
         if font in available_fonts:
             return font
@@ -19,7 +22,7 @@ def get_sans_font():
     return "TkDefaultFont"
 
 
-def get_monospace_font():
+def get_monospace_font() -> str:
     """获取系统等宽字体名称"""
     available_fonts = set(tkfont.families())
     preferred_fonts = [

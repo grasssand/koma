@@ -3,11 +3,15 @@
 # ==========================================
 
 [app]
+# 文件列表字体
+font = "Noto Sans SC"
+# 文件列表字体大小（整数）
+font_size = 10
+
+[converter]
 # 线程并发数
 # 设置为 0 则自动使用 CPU 核心数的 75%
 max_workers = 0
-
-[converter]
 # 转换格式，可选: "avif (svt)", "avif (aom)", "webp", "jxl"
 format = "avif (svt)"
 # 质量 (1-100)
@@ -32,7 +36,7 @@ archive = [
 
 [scanner]
 # 是否开启广告扫描
-enable_ad_scan = false
+enable_ad_scan = true
 # 二维码白名单 (包含这些域名的二维码不视为广告)
 qr_whitelist = [
     "x.com",
