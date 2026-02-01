@@ -13,6 +13,7 @@ def renamer_setup(tmp_path):
     work_dir.mkdir()
 
     (work_dir / "10.avif").touch()
+    (work_dir / "cover.webp").touch()
     (work_dir / "2.png").touch()
     (work_dir / "001.jpg").touch()
 
@@ -28,20 +29,27 @@ def test_renamer_success(renamer_setup):
 
         res = ScanResult()
         # 模拟乱序输入
-        res.to_convert = [work_dir / "10.avif"]
-        res.to_copy = [work_dir / "2.png", work_dir / "001.jpg"]
+        res.to_convert = [
+            work_dir / "10.avif",
+            work_dir / "COVER.webp",
+        ]
+        res.to_copy = [
+            work_dir / "2.png",
+            work_dir / "001.jpg",
+        ]
 
         mock_instance.run.return_value = iter([(work_dir, res)])
 
         renamer = Renamer(work_dir)
         renamer.run()
 
-        assert (work_dir / "000.jpg").exists()  # 原 001.jpg
-        assert (work_dir / "001.png").exists()  # 原 2.png
-        assert (work_dir / "002.avif").exists()  # 原 10.avif
+        assert (work_dir / "000.webp").exists()  # 原 cover.webp
+        assert (work_dir / "001.jpg").exists()  # 原 001.jpg
+        assert (work_dir / "002.png").exists()  # 原 2.png
+        assert (work_dir / "003.avif").exists()  # 原 10.avif
 
         # 验证旧文件不存在
-        assert not (work_dir / "001.jpg").exists()
+        assert not (work_dir / "2.png").exists()
 
 
 def test_renamer_empty_folder(renamer_setup):

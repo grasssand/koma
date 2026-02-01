@@ -39,7 +39,11 @@ class Renamer:
                     temp_path = root / temp_name
 
                     os.rename(src_path, temp_path)
-                    temp_map.append((src_path.name, temp_path))
+
+                    if src_path.stem.lower() == "cover":
+                        temp_map.insert(0, (src_path.name, temp_path))
+                    else:
+                        temp_map.append((src_path.name, temp_path))
 
             except Exception as e:
                 logger.error(f"临时重命名发生错误，停止当前文件夹处理: {e}")
