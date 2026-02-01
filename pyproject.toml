@@ -1,6 +1,6 @@
 [project]
 name = "Koma"
-version = "0.2.0"
+version = "0.3.0"
 description = "Manga Organization Toolbox."
 readme = "README.md"
 authors = [
