@@ -1,13 +1,15 @@
 import os
+from collections.abc import Generator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Generator
 
 from natsort import natsorted
 
 from koma.config import (
     ARCHIVE_EXTS,
     CONVERT_EXTS,
+    DOCUMENT_EXTS,
+    MISC_WHITELIST_FILES,
     PASSTHROUGH_EXTS,
     SUPPORTED_IMAGE_EXTS,
 )
@@ -41,14 +43,17 @@ class Scanner:
             for f in files:
                 f_path = root / f
 
-                if f.startswith(".") or f_path.suffix.lower() not in (
-                    SUPPORTED_IMAGE_EXTS | ARCHIVE_EXTS
+                if f.startswith(".") or (
+                    f.lower() not in MISC_WHITELIST_FILES
+                    and f_path.suffix.lower()
+                    not in (SUPPORTED_IMAGE_EXTS | ARCHIVE_EXTS | DOCUMENT_EXTS)
                 ):
                     result.junk.append(f_path)
                     logger.info(f"❌ 发现杂项文件: {f_path}")
                     continue
 
-                image_candidates.append(f)
+                elif f_path.suffix.lower() in SUPPORTED_IMAGE_EXTS:
+                    image_candidates.append(f)
 
             confirmed_ads = set()
             if self.enable_ad_detection and image_candidates:

@@ -13,6 +13,7 @@ def scanner_setup(tmp_path):
     # 模拟各类文件
     (root / "01.jpg").touch()
     (root / "02.png").touch()
+    (root / "03.avif").touch()
     (root / "script.txt").touch()  # Junk
     (root / ".hidden").touch()
 
@@ -29,10 +30,12 @@ def test_scanner_classification(scanner_setup):
         root, res = results[0]
 
         convert_names = [p.name for p in res.to_convert]
+        copy_names = [p.name for p in res.to_copy]
         junk_names = [p.name for p in res.junk]
 
         assert "01.jpg" in convert_names
         assert "02.png" in convert_names
+        assert "03.avif" in copy_names
 
         assert "script.txt" in junk_names
         assert ".hidden" in junk_names

@@ -1,9 +1,10 @@
 import os
 import re
 import sys
-import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
+
+import tomllib
 
 CONFIG_FILENAME = "config.toml"
 OUTPUT_FORMATS = ["avif (svt)", "avif (aom)", "webp", "jxl"]
@@ -53,8 +54,21 @@ passthrough = [
 ]
 # 归档文件格式
 archive = [
-    ".zip", ".cbz", ".rar", ".cbr", ".7z", ".cb7", ".pdf", ".epub",
-    ".tar", ".cbt", ".gz", ".tgz", ".bz2", ".tbz2", ".xz", ".txz", ".zst",
+    ".zip", ".cbz", ".rar", ".cbr", ".7z", ".cb7", ".tar",
+    ".gz", ".tgz", ".bz2", ".tbz2", ".xz", ".txz", ".zst"
+]
+# 文档格式
+document = [
+    ".pdf", ".epub", ".azw3", ".mobi"
+]
+
+# 杂项文件白名单
+misc_whitelist = [
+    "comicinfo.xml", "readme.txt", "readme.md"
+]
+# 系统垃圾文件
+system_junk = [
+    ".ds_store", "thumbs.db", "__macosx", "desktop.ini"
 ]
 
 [scanner]
@@ -164,9 +178,16 @@ class ExtensionsConfig:
             ".cbr",
             ".7z",
             ".cb7",
-            ".pdf",
-            ".epub",
         }
+    )
+    document: set[str] = field(
+        default_factory=lambda: {".pdf", ".epub", ".azw3", ".mobi"}
+    )
+    misc_whitelist: set[str] = field(
+        default_factory=lambda: {"comicinfo.xml", "readme.txt", "readme.md"}
+    )
+    system_junk: set[str] = field(
+        default_factory=lambda: {".ds_store", "thumbs.db", "__macosx", "desktop.ini"}
     )
 
     def __post_init__(self):
@@ -176,9 +197,15 @@ class ExtensionsConfig:
             self.passthrough = set(self.passthrough)
         if isinstance(self.archive, list):
             self.archive = set(self.archive)
+        if isinstance(self.document, list):
+            self.document = set(self.document)
+        if isinstance(self.system_junk, list):
+            self.system_junk = set(self.system_junk)
+        if isinstance(self.misc_whitelist, list):
+            self.misc_whitelist = set(self.misc_whitelist)
 
     @property
-    def all_supported(self) -> set[str]:
+    def all_supported_img(self) -> set[str]:
         return self.convert | self.passthrough
 
 
@@ -253,8 +280,11 @@ CONVERTER_CFG = {
 
 CONVERT_EXTS = _cfg.extensions.convert
 PASSTHROUGH_EXTS = _cfg.extensions.passthrough
-SUPPORTED_IMAGE_EXTS = _cfg.extensions.all_supported
+SUPPORTED_IMAGE_EXTS = _cfg.extensions.all_supported_img
 ARCHIVE_EXTS = _cfg.extensions.archive
+DOCUMENT_EXTS = _cfg.extensions.document
+MISC_WHITELIST_FILES = _cfg.extensions.misc_whitelist
+SYSTEM_JUNK_FILES = _cfg.extensions.system_junk
 
 ENABLE_AD_SCAN = _cfg.scanner.enable_ad_scan
 QR_WHITELIST = _cfg.scanner.qr_whitelist

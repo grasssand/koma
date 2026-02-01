@@ -30,13 +30,26 @@ passthrough = [
 ]
 # 归档文件格式
 archive = [
-    ".zip", ".cbz", ".rar", ".cbr", ".7z", ".cb7", ".pdf", ".epub",
-    ".tar", ".cbt", ".gz", ".tgz", ".bz2", ".tbz2", ".xz", ".txz", ".zst",
+    ".zip", ".cbz", ".rar", ".cbr", ".7z", ".cb7", ".tar",
+    ".gz", ".tgz", ".bz2", ".tbz2", ".xz", ".txz", ".zst"
+]
+# 文档格式
+document = [
+    ".pdf", ".epub", ".azw3", ".mobi"
+]
+
+# 杂项文件白名单
+misc_whitelist = [
+    "comicinfo.xml", "readme.txt", "readme.md"
+]
+# 系统垃圾文件
+system_junk = [
+    ".ds_store", "thumbs.db", "__macosx", "desktop.ini"
 ]
 
 [scanner]
 # 是否开启广告扫描
-enable_ad_scan = true
+enable_ad_scan = false
 # 二维码白名单 (包含这些域名的二维码不视为广告)
 qr_whitelist = [
     "x.com",

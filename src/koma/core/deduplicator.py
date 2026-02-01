@@ -4,7 +4,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import NamedTuple
 
-from koma.config import ARCHIVE_EXTS, COMIC_TITLE_RE
+from koma.config import ARCHIVE_EXTS, COMIC_TITLE_RE, DOCUMENT_EXTS
 
 
 class DuplicateItem(NamedTuple):
@@ -32,7 +32,7 @@ class Deduplicator:
                 # 检查归档文件
                 for f in filenames:
                     f_path = current_dir / f
-                    if f_path.suffix.lower() in ARCHIVE_EXTS:
+                    if f_path.suffix.lower() in (ARCHIVE_EXTS | DOCUMENT_EXTS):
                         self._process_node(f_path, is_archive=True, lookup=items_map)
 
         return {k: v for k, v in items_map.items() if len(v) > 1}
