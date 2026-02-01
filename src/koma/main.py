@@ -8,7 +8,7 @@ def main():
     # 启动 GUI
     try:
         root = tk.Tk()
-        app = KomaGUI(root)
+        KomaGUI(root)
         root.mainloop()
 
     except Exception as e:

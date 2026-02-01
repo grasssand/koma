@@ -22,16 +22,14 @@ class Renamer:
             if not all_images:
                 continue
 
-            all_images = natsorted(all_images, key=lambda p: p.name)
+            all_images = natsorted(all_images)
 
             total_count = len(all_images)
             logger.info(f"📂 {root.name} (共 {total_count} 张)")
 
             # 至少保留 3 位 (001)
             num_digits = max(3, len(str(total_count)))
-
             temp_map = []
-
             try:
                 for src_path in all_images:
                     # 生成临时文件名，防止命名冲突
@@ -52,9 +50,8 @@ class Renamer:
             for index, (src_name, temp_path) in enumerate(temp_map):
                 new_name = ""
                 try:
-                    suffix = temp_path.suffix
                     new_stem = f"{index:0{num_digits}d}"
-                    new_name = f"{new_stem}{suffix}"
+                    new_name = f"{new_stem}{temp_path.suffix}"
                     final_path = root / new_name
 
                     logger.info(f"🔁 {src_name} -> {new_name}")
