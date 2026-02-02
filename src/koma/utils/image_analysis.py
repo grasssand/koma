@@ -16,11 +16,12 @@ def analyze_image(img_path) -> tuple[bool, bool]:
             if is_anim:
                 return True, False
 
-        cv_img = cv2.imread(str(img_path))
-        if cv_img is None:
+        img_array = np.fromfile(img_path, dtype=np.uint8)
+        img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+        if img is None:
             return False, False
 
-        thumb = cv2.resize(cv_img, (64, 64), interpolation=cv2.INTER_AREA)
+        thumb = cv2.resize(img, (64, 64), interpolation=cv2.INTER_AREA)
         hsv = cv2.cvtColor(thumb, cv2.COLOR_BGR2HSV)
         s = hsv[:, :, 1]
         mean_sat = np.mean(s)
