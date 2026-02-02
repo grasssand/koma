@@ -54,10 +54,34 @@ jobs:
         name: Koma-Build-Artifact
         path: ${{ env.RELEASE_ASSET }}
         if-no-files-found: error
+    - name: Release Notes
+      shell: python
+      if: github.ref_type == 'tag'
+      run: |
+        import os
+        tag = os.environ.get("GITHUB_REF_NAME", "")
+        notes = []
+        recording = False
+        try:
+            with open("CHANGELOG.md", "r", encoding="utf-8") as f:
+                for line in f:
+                    if line.startswith(f"## {tag}"):
+                        recording = True
+                        continue
+                    if recording and line.startswith("## v"):
+                        break
+                    if recording:
+                        notes.append(line)
+            with open("release_notes.txt", "w", encoding="utf-8") as f:
+                f.write("".join(notes).strip())
+        except Exception:
+            with open("release_notes.txt", "w") as f:
+                f.write(f"Release {tag}")
     - name: Release
       uses: softprops/action-gh-release@v2
       if: github.ref_type == 'tag'
       with:
         files: ${{ env.RELEASE_ASSET }}
+        body_path: release_notes.txt
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
