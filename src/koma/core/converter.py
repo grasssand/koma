@@ -198,17 +198,57 @@ class Converter:
         if not results:
             return
 
-        total_in = sum(r.in_size for r in results)
-        total_out = sum(r.out_size for r in results)
+        total_in = 0
+        total_out = 0
+        csv_rows = []
+        failures = []
+
+        for r in results:
+            total_in += r.in_size
+            total_out += r.out_size
+
+            if r.error:
+                failures.append(r)
+
+            csv_rows.append(
+                [
+                    r.file,
+                    r.in_size_fmt,
+                    r.out_size_fmt,
+                    f"{r.ratio:.2f}%" if r.ratio else "-",
+                    r.status.value,
+                    r.error,
+                ]
+            )
+
         total_time = time.monotonic() - start_time
         saved_size = total_in - total_out
         saved_ratio = (saved_size / total_in * 100) if total_in > 0 else 0
 
-        logger.info("=" * 105)
-        logger.info(f"🏁 共 {len(results)} 张图片完成！耗时: {total_time:.1f}s")
+        logger.info("=" * 100)
+        logger.info(
+            f"🏁 任务完成！总计: {len(results)} | 成功: {len(results) - len(failures)} | 失败: {len(failures)}"
+        )
+        logger.info(f"⏱️ 总耗时: {total_time:.1f}s")
         logger.info(f"📈 总原体积: {format_size(total_in)}")
         logger.info(f"📉 总新体积: {format_size(total_out)}")
-        logger.info(f"♻️ 节省空间: {format_size(saved_size)} (-{saved_ratio:.1f}%)")
+        if saved_size >= 0:
+            logger.info(f"♻️ 节省空间: {format_size(saved_size)} (-{saved_ratio:.1f}%)")
+        else:
+            logger.info(
+                f"⚠️ 体积增加: {format_size(abs(saved_size))} (+{abs(saved_ratio):.1f}%)"
+            )
+
+        if failures:
+            logger.info("-" * 100)
+            logger.warning(f"⚠️ 发现 {len(failures)} 个文件处理失败:")
+            for i, f in enumerate(failures, 1):
+                if i > 20:
+                    logger.warning(
+                        f"  ... 以及其他 {len(failures) - 20} 个错误 (详情请见 CSV 报告)"
+                    )
+                    break
+                logger.warning(f"❌ [{i}] {f.file}: {f.error}")
 
         csv_path = self.output_dir / f"report_{int(time.time())}.csv"
         try:
@@ -216,18 +256,9 @@ class Converter:
             with open(csv_path, mode="w", encoding="utf-8-sig", newline="") as f:
                 writer = csv.writer(f)
                 writer.writerow(["文件名", "原大小", "新大小", "比例%", "状态", "错误"])
+                writer.writerows(csv_rows)
 
-                for r in results:
-                    writer.writerow(
-                        [
-                            r.file,
-                            r.in_size_fmt,
-                            r.out_size_fmt,
-                            f"{r.ratio:.2f}%" if r.ratio else "-",
-                            r.status.value,
-                            r.error,
-                        ]
-                    )
-            logger.info(f"📊 CSV 报告已生成: {csv_path}")
+            logger.info("-" * 100)
+            logger.info(f"📊 详细 CSV 报告已生成: {csv_path}")
         except Exception as e:
             logger.error(f"无法生成报告: {e}")
