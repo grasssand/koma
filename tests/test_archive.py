@@ -1,6 +1,5 @@
 import shutil
 import zipfile
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -24,13 +23,14 @@ def test_init_detection():
 
     # 系统无 7z
     with patch("shutil.which", return_value=None):
-        h = ArchiveHandler()
-        assert h.seven_zip is None
+        with patch("pathlib.Path.exists", return_value=False):
+            h = ArchiveHandler()
+            assert h.seven_zip is None
 
 
-def test_smart_extract_nested(tmp_path, archive_handler):
-    """测试解压"""
-    archive_path = Path("comic.zip")
+def test_extract_nested(tmp_path, archive_handler):
+    """测试解压：嵌套结构"""
+    archive_path = tmp_path / "comic.zip"
     temp_root = tmp_path / "temp"
 
     container = temp_root / "comic"
@@ -42,17 +42,16 @@ def test_smart_extract_nested(tmp_path, archive_handler):
     (container / "__MACOSX").mkdir()
     (container / "Thumbs.db").touch()
 
-    with patch.object(archive_handler, "_extract_zipfile", return_value=True):
+    with patch.object(archive_handler, "_extract_7z", return_value=True):
         result_path = archive_handler.extract(archive_path, temp_root)
 
         assert result_path == inner
         assert result_path.name == "InnerFolder"
 
 
-def test_smart_extract_flat(tmp_path, archive_handler):
-    """测试智能解压：'散乱'结构 (返回容器目录)"""
-    # 模拟结构: temp_root/ArchiveName/01.jpg (直接散在里面)
-    archive_path = Path("comic.zip")
+def test_extract_flat(tmp_path, archive_handler):
+    """测试解压：散乱结构"""
+    archive_path = tmp_path / "comic.zip"
     temp_root = tmp_path / "temp"
 
     container = temp_root / "comic"
@@ -60,10 +59,9 @@ def test_smart_extract_flat(tmp_path, archive_handler):
     (container / "01.jpg").touch()
     (container / "02.jpg").touch()
 
-    with patch.object(archive_handler, "_extract_zipfile", return_value=True):
+    with patch.object(archive_handler, "_extract_7z", return_value=True):
         result_path = archive_handler.extract(archive_path, temp_root)
 
-        # 期望：返回 container
         assert result_path == container
         assert result_path.name == "comic"
 

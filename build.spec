@@ -8,8 +8,8 @@ a = Analysis(
     ["src/koma/main.py"],
     pathex=[],
     binaries=[
-        ('src/koma/resources/7z/7z.exe', 'resources'),
-        ('src/koma/resources/7z/7z.dll', 'resources')
+        ("src/koma/resources/7z/7z.exe", "koma/resources/7z"),
+        ("src/koma/resources/7z/7z.dll", "koma/resources/7z"),
     ],
     datas=datas,
     hiddenimports=["koma.utils.logger"],

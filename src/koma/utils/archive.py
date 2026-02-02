@@ -13,7 +13,7 @@ class ArchiveHandler:
     def __init__(self):
         self.seven_zip = shutil.which("7z")
         if not self.seven_zip:
-            local_7z = Path(__file__).parent.parent / "resources" / "7z.exe"
+            local_7z = Path(__file__).parent.parent / "resources" / "7z" / "7z.exe"
             if local_7z.exists():
                 self.seven_zip = str(local_7z)
 
