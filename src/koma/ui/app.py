@@ -2,11 +2,13 @@ import logging
 import os
 import shutil
 import subprocess
+import sys
 import threading
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
+from PIL import Image, ImageTk
 from send2trash import send2trash
 
 import koma
@@ -14,6 +16,7 @@ from koma.config import CONVERTER_CFG, ENABLE_AD_SCAN, FONT_SIZE, OUTPUT_FORMATS
 from koma.core import Converter, Renamer, Scanner
 from koma.ui.binder_frame import BinderFrame
 from koma.ui.dedupe_window import DedupeWindow
+from koma.ui.settings import SettingsDialog
 from koma.ui.utils import get_monospace_font, get_sans_font
 from koma.utils import logger
 
@@ -47,6 +50,7 @@ class KomaGUI:
             logger.warning("未检测到 FFmpeg！格式转换功能将无法使用。")
 
         self.init_vars()
+        self.setup_icon()
         self.create_widgets()
         self.setup_logging()
         self.toggle_quality_state()
@@ -69,10 +73,20 @@ class KomaGUI:
         self.progress_var = tk.DoubleVar(value=0)
         self.status_var = tk.StringVar(value="准备就绪")
 
+    def open_settings(self):
+        SettingsDialog(self.root)
+
     def create_widgets(self):
         main_frame = ttk.Frame(self.root)
         main_frame.pack(fill="both", expand=True)
 
+        top_bar = ttk.Frame(main_frame)
+        top_bar.pack(fill="x", padx=10, pady=(6, 0))
+
+        btn_settings = ttk.Button(
+            top_bar, text="⚙️ 全局设置", command=self.open_settings, width=12
+        )
+        btn_settings.pack(side="right")
         self.notebook = ttk.Notebook(main_frame)
         self.notebook.pack(fill="both", expand=True, padx=10, pady=5)
 
@@ -106,6 +120,23 @@ class KomaGUI:
             font=(get_monospace_font(), 9),
         )
         self.log_text.pack(fill="both", expand=True)
+
+    def setup_icon(self):
+        """加载应用程序图标"""
+        try:
+            if getattr(sys, "frozen", False):
+                base_path = Path(sys._MEIPASS) / "koma"  # type: ignore
+            else:
+                base_path = Path(__file__).parent.parent
+
+            icon_path = Path(base_path) / "resources" / "koma.ico"
+            if icon_path.exists():
+                with Image.open(icon_path) as img:
+                    icon = ImageTk.PhotoImage(img)
+                self.root.iconphoto(True, icon)
+
+        except Exception as e:
+            logger.error(f"加载图标失败: {e}")
 
     def setup_clean_tab(self):
         """扫描清理"""
