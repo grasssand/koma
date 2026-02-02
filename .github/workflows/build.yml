@@ -1,0 +1,63 @@
+name: Build Koma
+
+on:
+  push:
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - "main"
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build on Windows
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v6
+    - name: Install uv
+      uses: astral-sh/setup-uv@v7
+      with:
+        python-version: '3.14'
+    - name: Install FFmpeg
+      run: choco install ffmpeg
+    - name: Install dependencies
+      run: uv sync --all-extras --all-groups
+    - name: Lint with Ruff
+      run: |
+        uvx ruff check .
+        uvx ruff format --check .
+    - name: Run Tests
+      run: uv run pytest
+      env:
+        CI: true
+    - name: Build with PyInstaller
+      run: |
+        uv run pyinstaller build.spec --clean --noconfirm
+    - name: Package Application
+      id: package
+      shell: powershell
+      run: |
+        $Version = $env:GITHUB_REF_NAME
+        $ZipName = "Koma-Windows-x64_$Version.zip"
+        Write-Host "Packaging: $ZipName"
+        if (Test-Path "dist/Koma.exe") {
+            Compress-Archive -Path "dist/Koma.exe" -DestinationPath "$ZipName" -Force
+        } else {
+            Write-Error "Error: dist/Koma.exe not found!"
+            exit 1
+        }
+        Add-Content -Path $env:GITHUB_ENV -Value "RELEASE_ASSET=$ZipName"
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v6
+      with:
+        name: Koma-Build-Artifact
+        path: ${{ env.RELEASE_ASSET }}
+        if-no-files-found: error
+    - name: Release
+      uses: softprops/action-gh-release@v2
+      if: github.ref_type == 'tag'
+      with:
+        files: ${{ env.RELEASE_ASSET }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
