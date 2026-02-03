@@ -1,3 +1,4 @@
+import csv
 from unittest.mock import patch
 
 import pytest
@@ -101,3 +102,49 @@ def test_final_rename_failure(renamer_setup):
 
         renamer = Renamer(work_dir)
         renamer.run()
+
+
+def test_renamer_csv_export(renamer_setup):
+    """测试 CSV 报告生成功能"""
+    work_dir = renamer_setup
+
+    with patch("koma.core.renamer.Scanner") as MockScanner:
+        mock_instance = MockScanner.return_value
+
+        res = ScanResult()
+        # 模拟文件：10.avif, 2.png
+        # 预期重命名：10.avif -> 001.avif, 2.png -> 000.png (按自然排序 2 < 10)
+        res.to_convert = [work_dir / "10.avif"]
+        res.to_copy = [work_dir / "2.png"]
+
+        mock_instance.run.return_value = iter([(work_dir, res)])
+
+        # 启用 CSV 导出
+        renamer = Renamer(work_dir, export_csv=True)
+        renamer.run()
+
+        # 验证文件重命名成功
+        assert (work_dir / "000.png").exists()
+        assert (work_dir / "001.avif").exists()
+
+        # 验证 CSV 存在
+        csv_files = list(work_dir.glob("rename_report_*.csv"))
+        assert len(csv_files) == 1
+        csv_path = csv_files[0]
+
+        # 验证 CSV 内容
+        with open(csv_path, encoding="utf-8-sig") as f:
+            reader = csv.reader(f)
+            rows = list(reader)
+
+            # 表头
+            assert rows[0] == ["文件夹", "原文件名", "新文件名"]
+
+            # 预期数据: ['chapter_1', '2.png', '000.png'], ['chapter_1', '10.avif', '001.avif']
+            data_rows = rows[1:]
+            assert len(data_rows) == 2
+
+            expected_1 = [str(work_dir), "2.png", "000.png"]
+            expected_2 = [str(work_dir), "10.avif", "001.avif"]
+            assert expected_1 in data_rows
+            assert expected_2 in data_rows

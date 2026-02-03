@@ -60,6 +60,7 @@ class KomaGUI:
         self.clean_ad_scan_var = tk.BooleanVar(value=ENABLE_AD_SCAN)
 
         self.rename_path_var = tk.StringVar()
+        self.rename_csv_var = tk.BooleanVar(value=False)
 
         self.input_path_var = tk.StringVar()
         self.output_path_var = tk.StringVar()
@@ -242,6 +243,9 @@ class KomaGUI:
         ttk.Button(
             sub, text="选择...", command=lambda: self.select_dir(self.rename_path_var)
         ).pack(side="left", padx=(5, 0))
+        ttk.Checkbutton(
+            grp, text="重命名结果保存到 CSV", variable=self.rename_csv_var
+        ).pack(side="left", pady=(10, 0))
 
         self.btn_rename = ttk.Button(
             frame, text="🎯 开始重命名", command=self.start_rename
@@ -607,7 +611,11 @@ class KomaGUI:
     def _rename_thread(self, path: Path):
         try:
             self.update_status("正在重命名...", indeterminate=True)
-            Renamer(Path(path), enable_ad_detection=False).run()
+            Renamer(
+                Path(path),
+                enable_ad_detection=False,
+                export_csv=self.rename_csv_var.get(),
+            ).run()
             self.update_status("✅ 重命名完成", 100, indeterminate=False)
             messagebox.showinfo("成功", "重命名完成")
         except Exception as e:
