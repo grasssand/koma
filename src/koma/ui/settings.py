@@ -206,9 +206,9 @@ class SettingsDialog(tk.Toplevel):
 
             _cfg.scanner.enable_ad_scan = self.ad_scan_var.get()
             qr_raw = self.txt_qr.get("1.0", "end-1c")
-            _cfg.scanner.qr_whitelist = [
-                line.strip() for line in qr_raw.split("\n") if line.strip()
-            ]
+            _cfg.scanner.qr_whitelist = sorted(
+                {line.strip() for line in qr_raw.split("\n") if line.strip()}
+            )
 
             save_config(_cfg)
 
