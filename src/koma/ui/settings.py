@@ -46,9 +46,9 @@ class SettingsDialog(tk.Toplevel):
 
     def init_app_tab(self):
         frame = ttk.Frame(self.notebook, padding=15)
-        self.notebook.add(frame, text="常规")
+        self.notebook.add(frame, text=" 常规 ")
 
-        grp = ttk.LabelFrame(frame, text="界面外观", padding=10)
+        grp = ttk.LabelFrame(frame, text="文件列表", padding=10)
         grp.pack(fill="x", pady=5)
 
         ttk.Label(grp, text="字体名称:").grid(row=0, column=0, sticky="w", pady=5)
@@ -65,22 +65,30 @@ class SettingsDialog(tk.Toplevel):
 
     def init_converter_tab(self):
         frame = ttk.Frame(self.notebook, padding=15)
-        self.notebook.add(frame, text="转换")
+        self.notebook.add(frame, text=" 格式转换 ")
 
         grp = ttk.LabelFrame(frame, text="默认转换参数", padding=10)
         grp.pack(fill="x", pady=5)
 
-        ttk.Label(grp, text="默认格式:").grid(row=0, column=0, sticky="w", pady=5)
+        ttk.Label(grp, text="并发线程:").grid(row=0, column=0, sticky="w", pady=5)
+        self.workers_var = tk.IntVar(value=_cfg.converter.max_workers)
+        f_work = ttk.Frame(grp)
+        f_work.grid(row=0, column=1, sticky="w", padx=10)
+        ttk.Spinbox(
+            f_work, from_=0, to=64, textvariable=self.workers_var, width=10
+        ).pack(side="left")
+        ttk.Label(f_work, text="(0 = 自动)").pack(side="left", padx=5)
+
+        ttk.Label(grp, text="默认格式:").grid(row=1, column=0, sticky="w", pady=5)
         self.format_var = tk.StringVar(value=_cfg.converter.format)
         ttk.Combobox(
             grp, textvariable=self.format_var, values=OUTPUT_FORMATS, state="readonly"
-        ).grid(row=0, column=1, sticky="ew", padx=10)
+        ).grid(row=1, column=1, sticky="ew", padx=10)
 
-        ttk.Label(grp, text="默认质量:").grid(row=1, column=0, sticky="w", pady=5)
+        ttk.Label(grp, text="默认质量:").grid(row=2, column=0, sticky="w", pady=5)
         self.quality_var = tk.IntVar(value=_cfg.converter.quality)
         q_frame = ttk.Frame(grp)
-        q_frame.grid(row=1, column=1, sticky="ew", padx=10)
-
+        q_frame.grid(row=2, column=1, sticky="ew", padx=10)
         scale = ttk.Scale(
             q_frame, from_=1, to=100, variable=self.quality_var, orient="horizontal"
         )
@@ -89,15 +97,6 @@ class SettingsDialog(tk.Toplevel):
         lbl_q.pack(side="right", padx=(5, 0))
         scale.configure(command=lambda v: lbl_q.configure(text=str(int(float(v)))))
 
-        ttk.Label(grp, text="并发线程:").grid(row=2, column=0, sticky="w", pady=5)
-        self.workers_var = tk.IntVar(value=_cfg.converter.max_workers)
-        f_work = ttk.Frame(grp)
-        f_work.grid(row=2, column=1, sticky="w", padx=10)
-        ttk.Spinbox(
-            f_work, from_=0, to=64, textvariable=self.workers_var, width=10
-        ).pack(side="left")
-        ttk.Label(f_work, text="(0 = 自动)").pack(side="left", padx=5)
-
         self.lossless_var = tk.BooleanVar(value=_cfg.converter.lossless)
         ttk.Checkbutton(grp, text="默认开启无损模式", variable=self.lossless_var).grid(
             row=3, column=1, sticky="w", padx=10, pady=5
@@ -105,7 +104,7 @@ class SettingsDialog(tk.Toplevel):
 
     def init_extensions_tab(self):
         tab_frame = ttk.Frame(self.notebook)
-        self.notebook.add(tab_frame, text="文件过滤")
+        self.notebook.add(tab_frame, text=" 过滤规则 ")
         canvas = tk.Canvas(tab_frame)
         scrollbar = ttk.Scrollbar(tab_frame, orient="vertical", command=canvas.yview)
         scroll_frame = ttk.Frame(canvas, padding=15)
@@ -166,7 +165,7 @@ class SettingsDialog(tk.Toplevel):
 
     def init_scanner_tab(self):
         frame = ttk.Frame(self.notebook, padding=15)
-        self.notebook.add(frame, text="扫描")
+        self.notebook.add(frame, text=" 扫描清理 ")
 
         self.ad_scan_var = tk.BooleanVar(value=_cfg.scanner.enable_ad_scan)
         ttk.Checkbutton(

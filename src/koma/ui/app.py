@@ -142,34 +142,42 @@ class KomaGUI:
         """扫描清理"""
         frame = self.tab_clean
 
+        desc = "遍历文件夹，扫描并清理其中的广告图片及垃圾文件。"
+        ttk.Label(frame, text=desc, foreground="#666").pack(
+            anchor="w", padx=10, pady=(15, 5)
+        )
+
         top_frame = ttk.Frame(frame)
         top_frame.pack(fill="x", padx=10, pady=10)
 
         path_grp = ttk.LabelFrame(top_frame, text="扫描目标", padding=10)
         path_grp.pack(fill="x", side="top")
+        path_grp.columnconfigure(1, weight=1)
 
-        sub = ttk.Frame(path_grp)
-        sub.pack(fill="x")
-        ttk.Entry(sub, textvariable=self.clean_path_var).pack(
-            side="left", fill="x", expand=True
+        ttk.Label(path_grp, text="路径:").grid(row=0, column=0, sticky="w")
+        ttk.Entry(path_grp, textvariable=self.clean_path_var).grid(
+            row=0, column=1, sticky="ew", padx=5
         )
         ttk.Button(
-            sub, text="选择...", command=lambda: self.select_dir(self.clean_path_var)
-        ).pack(side="left", padx=(5, 0))
-
-        opt_grp = ttk.Frame(path_grp)
-        opt_grp.pack(fill="x", pady=(10, 0))
+            path_grp,
+            text="选择...",
+            command=lambda: self.select_dir(self.clean_path_var),
+        ).grid(row=0, column=2)
 
         ttk.Checkbutton(
-            opt_grp, text="检测广告图片", variable=self.clean_ad_scan_var
-        ).pack(side="left")
+            path_grp, text="检测广告图片", variable=self.clean_ad_scan_var
+        ).grid(row=1, column=1, sticky="w", pady=(10, 5))
 
         self.btn_scan = ttk.Button(
-            opt_grp, text="🔍 开始扫描", command=self.start_clean_scan
+            path_grp, text="🔍 开始扫描", command=self.start_clean_scan
         )
-        self.btn_scan.pack(side="right", padx=5)
+        self.btn_scan.grid(
+            row=2, column=0, columnspan=3, sticky="ew", pady=(5, 0), ipady=5
+        )
 
-        list_frame = ttk.LabelFrame(frame, text="杂项文件（双击打开文件）", padding=10)
+        list_frame = ttk.LabelFrame(
+            frame, text="杂项文件（双击打开文件位置）", padding=10
+        )
         list_frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
 
         style = ttk.Style()
@@ -179,18 +187,17 @@ class KomaGUI:
         self.tree_clean = ttk.Treeview(
             list_frame, columns=columns, show="headings", selectmode="extended"
         )
-
         self.tree_clean.heading("type", text="类别")
         self.tree_clean.heading("name", text="文件名")
         self.tree_clean.heading("ext", text="文件类型")
         self.tree_clean.heading("folder", text="位置")
         self.tree_clean.heading("abspath", text="完整路径")
 
-        self.tree_clean.column("type", width=20, anchor="center")
+        self.tree_clean.column("type", width=40, anchor="center")
         self.tree_clean.column("name", width=100, anchor="w")
-        self.tree_clean.column("ext", width=40, anchor="w")
+        self.tree_clean.column("ext", width=60, anchor="w")
         self.tree_clean.column("folder", width=250, anchor="w")
-        self.tree_clean.column("abspath", width=0, stretch=False)  # 隐藏路径列
+        self.tree_clean.column("abspath", width=0, stretch=False)
         self.tree_clean["displaycolumns"] = ("type", "name", "ext", "folder")
 
         scrollbar = ttk.Scrollbar(
@@ -201,7 +208,6 @@ class KomaGUI:
         self.tree_clean.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
 
-        # 绑定双击事件
         self.tree_clean.bind("<Double-1>", self.on_clean_list_dblclick)
 
         action_frame = ttk.Frame(frame, padding=10)
@@ -220,15 +226,13 @@ class KomaGUI:
         """重命名"""
         frame = self.tab_rename
 
-        desc = (
-            "对文件夹内的图片进行【原地重命名】 (000, 001, 002 ...)。\n此操作不可逆！"
-        )
+        desc = "遍历文件夹内，同文件夹内的所有图片进行【原地重命名】 (000, 001, 002 ...)。\n此操作不可逆！"
         ttk.Label(frame, text=desc, foreground="#666").pack(
-            anchor="w", padx=20, pady=15
+            anchor="w", padx=10, pady=(15, 5)
         )
 
         grp = ttk.LabelFrame(frame, text="目标文件夹", padding=15)
-        grp.pack(fill="x", padx=20, pady=5)
+        grp.pack(fill="x", padx=10, pady=10)
 
         sub = ttk.Frame(grp)
         sub.pack(fill="x")
@@ -247,6 +251,11 @@ class KomaGUI:
     def setup_convert_tab(self):
         """格式转换"""
         frame = self.tab_convert
+
+        desc = "将图片或文件夹批量转换格式，不改变文件夹结构。"
+        ttk.Label(frame, text=desc, foreground="#666").pack(
+            anchor="w", padx=10, pady=(15, 5)
+        )
 
         grp_path = ttk.LabelFrame(frame, text="路径设置", padding=10)
         grp_path.pack(fill="x", padx=10, pady=10)
@@ -344,15 +353,15 @@ class KomaGUI:
         frame = self.tab_dedupe
 
         desc = (
-            "扫描多个文件夹内的归档文件 (zip, rar, cbz...) 和文件夹。\n"
-            '自动识别 "[社团 / 作者] 作品名 (系列)" 等信息，找出重复文件。'
+            "扫描遍历文件夹和归档文件 (zip, rar, cbz...)，识别并查找重复的归档文件和文件夹。\n"
+            '支持解析 "[社团 (作者)] 作品名 (系列)" 等信息。'
         )
         ttk.Label(frame, text=desc, foreground="#666").pack(
-            anchor="w", padx=20, pady=15
+            anchor="w", padx=10, pady=(15, 5)
         )
 
         grp = ttk.LabelFrame(frame, text="查重目标文件夹", padding=10)
-        grp.pack(fill="both", expand=True, padx=20, pady=5)
+        grp.pack(fill="both", expand=True, padx=10, pady=10)
 
         btn_frame = ttk.Frame(grp)
         btn_frame.pack(side="right", fill="y", padx=(5, 0))
@@ -442,16 +451,18 @@ class KomaGUI:
     def select_dir(self, var):
         p = filedialog.askdirectory()
         if p:
-            var.set(p)
+            native_path = str(Path(p))
+            var.set(native_path)
 
     def select_convert_input(self):
         p = filedialog.askdirectory()
         if p:
-            self.input_path_var.set(p)
+            native_path = Path(p)
+            self.input_path_var.set(str(native_path))
+
             if not self.output_path_var.get():
-                self.output_path_var.set(
-                    str(Path(p).parent / (Path(p).name + "_output"))
-                )
+                out_path = native_path.parent / (native_path.name + "_output")
+                self.output_path_var.set(str(out_path))
 
     def update_status(
         self, text: str, value: float | None = None, indeterminate: bool | None = None
@@ -550,7 +561,8 @@ class KomaGUI:
         file_path = self.tree_clean.item(item[0], "values")[4]
         try:
             if os.name == "nt":
-                os.startfile(file_path)
+                # os.startfile(file_path)
+                subprocess.run(["explorer", "/select,", str(file_path)])
             else:
                 subprocess.run(["xdg-open", file_path])
         except Exception as e:

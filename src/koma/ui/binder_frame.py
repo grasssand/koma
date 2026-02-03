@@ -13,10 +13,14 @@ class BinderFrame(ttk.Frame):
         super().__init__(parent)
 
         self.columnconfigure(0, weight=1)
-        self.rowconfigure(0, weight=1)
+        self.rowconfigure(1, weight=1)
+
+        desc = "将多个图片、存档、文件夹排序并重命名到单个新文件夹。"
+        lbl_desc = ttk.Label(self, text=desc, foreground="#666")
+
+        lbl_desc.grid(row=0, column=0, columnspan=2, sticky="w", padx=10, pady=(15, 5))
 
         self.output_path_var = tk.StringVar()
-
         self.on_status_update = None
         self._create_widgets()
 
@@ -25,7 +29,8 @@ class BinderFrame(ttk.Frame):
 
     def _create_widgets(self):
         list_frame = ttk.LabelFrame(self, text="合集内容", padding=5)
-        list_frame.grid(row=0, column=0, sticky="nsew", padx=(10, 5), pady=10)
+        list_frame.grid(row=1, column=0, sticky="nsew", padx=(10, 5), pady=10)
+
         list_frame.columnconfigure(0, weight=1)
         list_frame.rowconfigure(0, weight=1)
 
@@ -53,7 +58,7 @@ class BinderFrame(ttk.Frame):
         scrollbar_x.grid(row=1, column=0, sticky="ew")
 
         control_frame = ttk.Frame(self, padding=5)
-        control_frame.grid(row=0, column=1, sticky="ns", padx=(0, 10), pady=10)
+        control_frame.grid(row=1, column=1, sticky="ns", padx=(0, 10), pady=10)
 
         self.btn_add_file = ttk.Button(
             control_frame, text="📄 添加文件", command=self._add_files
@@ -89,7 +94,7 @@ class BinderFrame(ttk.Frame):
 
         opt_frame = ttk.LabelFrame(self, text="输出设置", padding=10)
         opt_frame.grid(
-            row=1, column=0, columnspan=2, sticky="ew", padx=10, pady=(0, 10)
+            row=2, column=0, columnspan=2, sticky="ew", padx=10, pady=(0, 10)
         )
 
         ttk.Label(opt_frame, text="保存位置:").pack(side="left")
@@ -101,10 +106,10 @@ class BinderFrame(ttk.Frame):
         btn_browse.pack(side="left")
 
         self.btn_start = ttk.Button(
-            self, text="🚀 开始装订", command=self._start_binding, state="normal"
+            self, text="📦 开始装订", command=self._start_binding, state="normal"
         )
         self.btn_start.grid(
-            row=2, column=0, columnspan=2, sticky="ew", padx=40, pady=(0, 30), ipady=5
+            row=3, column=0, columnspan=2, sticky="ew", padx=40, pady=(0, 30), ipady=5
         )
 
     def _get_file_type_icon(self, path: Path) -> str:
