@@ -12,6 +12,8 @@ from koma.config import MAX_WORKERS
 from koma.core.command_generator import CommandGenerator
 from koma.utils import analyze_image, logger
 
+MAX_RETRIES = 3
+
 
 class Status(str, Enum):
     PENDING = "⏳ PENDING"
@@ -104,63 +106,88 @@ class Converter:
     def _convert_worker(self, file_path: Path) -> ConversionResult:
         res = ConversionResult(file=file_path)
 
-        try:
-            if not file_path.exists():
-                raise FileNotFoundError("源文件缺失")
-            res.in_size = file_path.stat().st_size
+        for attempt in range(MAX_RETRIES):
+            try:
+                if not file_path.exists():
+                    raise FileNotFoundError("源文件缺失")
 
-            # 计算路径
-            rel_path = file_path.relative_to(self.input_dir)
-            target_folder = self.output_dir / rel_path.parent
-            target_folder.mkdir(parents=True, exist_ok=True)
-            target_file = target_folder / (file_path.stem + self.cmd_gen.get_ext())
+                res.error = ""
+                res.in_size = file_path.stat().st_size
 
-            # 分析与执行
-            is_anim, is_gray = analyze_image(file_path)
-            cmd = self.cmd_gen.generate(file_path, target_file, is_anim, is_gray)
+                # 计算路径
+                rel_path = file_path.relative_to(self.input_dir)
+                target_folder = self.output_dir / rel_path.parent
+                target_folder.mkdir(parents=True, exist_ok=True)
+                target_file = target_folder / (file_path.stem + self.cmd_gen.get_ext())
 
-            subprocess.run(
-                cmd,
-                check=True,
-                capture_output=True,
-                startupinfo=self.startupinfo,
-            )
+                # 分析与执行
+                is_anim, is_gray = analyze_image(file_path)
+                cmd = self.cmd_gen.generate(file_path, target_file, is_anim, is_gray)
 
-            if target_file.exists():
-                res.out_size = target_file.stat().st_size
-                res.status = (
-                    Status.BIGGER if res.out_size > res.in_size else Status.SUCCESS
+                subprocess.run(
+                    cmd,
+                    check=True,
+                    capture_output=True,
+                    startupinfo=self.startupinfo,
                 )
-                self._log_result(res)
-            else:
-                raise FileNotFoundError("输出文件未生成")
 
-        except Exception as e:
-            res.status = Status.ERROR
-            res.error = str(e)
-            self._log_result(res)
+                if target_file.exists():
+                    res.out_size = target_file.stat().st_size
+                    res.status = (
+                        Status.BIGGER if res.out_size > res.in_size else Status.SUCCESS
+                    )
+                    self._log_result(res)
+                    return res
+
+                else:
+                    raise FileNotFoundError("输出文件未生成")
+
+            except Exception as e:
+                res.error = str(e)
+                if attempt < MAX_RETRIES - 1:
+                    logger.warning(
+                        f"⚠️ 转换失败，正在重试 ({attempt + 1}/{MAX_RETRIES}): {file_path}"
+                    )
+                    time.sleep(1)
+                else:
+                    res.status = Status.ERROR
+                    self._log_result(res)
 
         return res
 
     def _copy_worker(self, file_path: Path) -> ConversionResult:
         res = ConversionResult(file=file_path)
 
-        try:
-            res.in_size = file_path.stat().st_size
-            rel_path = file_path.relative_to(self.input_dir)
-            target_path = self.output_dir / rel_path
-            target_path.parent.mkdir(parents=True, exist_ok=True)
+        for attempt in range(MAX_RETRIES):
+            try:
+                res.error = ""
 
-            shutil.copy2(file_path, target_path)
+                if not file_path.exists():
+                    raise FileNotFoundError("源文件缺失")
 
-            res.out_size = target_path.stat().st_size
-            res.status = Status.COPY
-            self._log_result(res)
+                res.in_size = file_path.stat().st_size
+                rel_path = file_path.relative_to(self.input_dir)
+                target_path = self.output_dir / rel_path
+                target_path.parent.mkdir(parents=True, exist_ok=True)
 
-        except Exception as e:
-            res.status = Status.ERROR
-            res.error = str(e)
-            self._log_result(res)
+                shutil.copy2(file_path, target_path)
+
+                res.out_size = target_path.stat().st_size
+                res.status = Status.COPY
+                self._log_result(res)
+
+                return res
+
+            except Exception as e:
+                res.error = str(e)
+                if attempt < MAX_RETRIES - 1:
+                    logger.warning(
+                        f"⚠️ 复制失败，正在重试 ({attempt + 1}/{MAX_RETRIES}): {file_path}"
+                    )
+                    time.sleep(1)
+                else:
+                    res.status = Status.ERROR
+                    self._log_result(res)
 
         return res
 
@@ -250,7 +277,7 @@ class Converter:
                     break
                 logger.warning(f"❌ [{i}] {f.file}: {f.error}")
 
-        csv_path = self.output_dir / f"report_{int(time.time())}.csv"
+        csv_path = self.output_dir / f"convert_report_{int(time.time())}.csv"
         try:
             self.output_dir.mkdir(parents=True, exist_ok=True)
             with open(csv_path, mode="w", encoding="utf-8-sig", newline="") as f:

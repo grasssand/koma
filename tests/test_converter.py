@@ -1,3 +1,4 @@
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -79,45 +80,95 @@ def test_convert_worker_bigger(converter_setup, mock_deps):
     assert res.status == Status.BIGGER
 
 
-def test_convert_worker_fail_subprocess(converter_setup, mock_deps):
-    """测试 FFmpeg 报错 (Status.ERROR)"""
+@patch("koma.core.converter.time.sleep")
+def test_convert_worker_retry_success(mock_sleep, converter_setup, mock_deps):
+    """测试转换遇到临时错误，重试后成功"""
+    converter, in_dir, out_dir = converter_setup
+    _, mock_run, _ = mock_deps
+
+    src_file = in_dir / "retry.jpg"
+    src_file.write_bytes(b"content 0123456789abcdef")
+
+    # 模拟：第1次报错，第2次成功
+    def side_effect(*args, **kwargs):
+        if mock_run.call_count == 1:
+            raise Exception("FFmpeg temporary fail")
+
+        # 第二次调用成功
+        expected_out = out_dir / "retry.avif"
+        expected_out.parent.mkdir(parents=True, exist_ok=True)
+        expected_out.write_bytes(b"converted data")
+        return MagicMock(returncode=0)
+
+    mock_run.side_effect = side_effect
+
+    res = converter._convert_worker(src_file)
+
+    assert res.status == Status.SUCCESS
+    assert mock_run.call_count == 2  # 确保调用了2次
+    assert mock_sleep.called  # 确保触发了等待
+
+
+@patch("koma.core.converter.time.sleep")
+def test_convert_worker_fail_max_retries(mock_sleep, converter_setup, mock_deps):
+    """测试重试次数耗尽仍然失败 (Status.ERROR)"""
     converter, in_dir, _ = converter_setup
     _, mock_run, _ = mock_deps
 
     src_file = in_dir / "corrupt.jpg"
     src_file.touch()
 
-    mock_run.side_effect = Exception("FFmpeg crashed")
+    # 始终抛出异常
+    mock_run.side_effect = Exception("Persistent FFmpeg crash")
 
     res = converter._convert_worker(src_file)
+
     assert res.status == Status.ERROR
-    assert "FFmpeg crashed" in res.error
+    assert "Persistent FFmpeg crash" in res.error
+    assert mock_run.call_count == 3  # 默认 MAX_RETRIES = 3
+    assert mock_sleep.call_count == 2  # 失败2次后sleep，第3次失败后退出
 
 
-def test_convert_worker_missing_source(converter_setup, mock_deps):
-    """测试源文件缺失"""
-    converter, in_dir, _ = converter_setup
-
-    res = converter._convert_worker(in_dir / "ghost.jpg")
-    assert res.status == Status.ERROR
-    assert "源文件缺失" in res.error
-
-
-def test_copy_worker(converter_setup):
-    """测试直接复制逻辑"""
+@patch("koma.core.converter.time.sleep")
+def test_copy_worker_retry_success(mock_sleep, converter_setup):
+    """测试复制操作的重试逻辑"""
     converter, in_dir, out_dir = converter_setup
 
     sub_dir = in_dir / "folder"
     sub_dir.mkdir()
-    src_file = sub_dir / "keep.png"
-    src_file.write_bytes(b"keep me")
+    src_file = sub_dir / "retry_copy.png"
+    src_file.write_bytes(b"data")
 
-    res = converter._copy_worker(src_file)
+    with patch("shutil.copy2") as mock_copy:
+        # 模拟：第1次抛出文件被占用错误，第2次成功
+        def side_effect(src, dst):
+            if mock_copy.call_count == 1:
+                raise OSError("File used by another process")
+            # 模拟复制动作 (创建目标文件)
+            Path(dst).write_bytes(b"data")
 
-    assert res.status == Status.COPY
-    expected_out = out_dir / "folder" / "keep.png"
-    assert expected_out.exists()
-    assert expected_out.read_bytes() == b"keep me"
+        mock_copy.side_effect = side_effect
+
+        res = converter._copy_worker(src_file)
+
+        assert res.status == Status.COPY
+        assert mock_copy.call_count == 2
+        assert mock_sleep.called
+
+        # 验证目标文件逻辑路径正确
+        expected_out = out_dir / "folder" / "retry_copy.png"
+        assert expected_out.exists()
+
+
+def test_convert_worker_missing_source(converter_setup, mock_deps):
+    """测试源文件缺失 (会被重试机制捕获，最终返回 ERROR)"""
+    converter, in_dir, _ = converter_setup
+
+    with patch("koma.core.converter.time.sleep"):
+        res = converter._convert_worker(in_dir / "ghost.jpg")
+
+    assert res.status == Status.ERROR
+    assert "源文件缺失" in res.error
 
 
 def test_run_loop_and_report(converter_setup, mock_deps):
@@ -151,10 +202,10 @@ def test_run_loop_and_report(converter_setup, mock_deps):
 
         mock_convert.assert_called_with(file_to_convert)
         mock_copy.assert_called_with(file_to_copy)
-        assert mock_cb.call_count == 2  # 两个任务，回调两次
+        assert mock_cb.call_count == 2
 
         # 验证 CSV 报告生成
-        csv_files = list(out_dir.glob("report_*.csv"))
+        csv_files = list(out_dir.glob("convert_report_*.csv"))
         assert len(csv_files) == 1
 
         content = csv_files[0].read_text(encoding="utf-8-sig")
