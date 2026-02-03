@@ -1,16 +1,29 @@
+import os
+import shutil
+
+BUILD_WITH_FFMPEG = os.environ.get("BUILD_WITH_FFMPEG", "false").lower() == "true"
+
 block_cipher = None
 
 datas = [
     ("src/koma/resources", "koma/resources"),
 ]
+binaries = [
+    ("src/koma/resources/7z/7z.exe", "koma/resources/7z"),
+    ("src/koma/resources/7z/7z.dll", "koma/resources/7z"),
+]
+if BUILD_WITH_FFMPEG:
+    ffmpeg_path = shutil.which("ffmpeg") or "ffmpeg.exe"
+    if os.path.exists(ffmpeg_path):
+        print(f"Found FFmpeg for bundling: {ffmpeg_path}")
+        binaries.append((ffmpeg_path, "koma/resources/ffmpeg"))
+    else:
+        print("WARNING: BUILD_WITH_FFMPEG is True but ffmpeg not found!")
 
 a = Analysis(
     ["src/koma/main.py"],
     pathex=[],
-    binaries=[
-        ("src/koma/resources/7z/7z.exe", "koma/resources/7z"),
-        ("src/koma/resources/7z/7z.dll", "koma/resources/7z"),
-    ],
+    binaries=binaries,
     datas=datas,
     hiddenimports=["koma.utils.logger"],
     hookspath=[],

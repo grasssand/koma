@@ -12,7 +12,15 @@ class CommandGenerator:
 
         self.ffmpeg_bin = shutil.which("ffmpeg")
         if not self.ffmpeg_bin:
-            raise FileNotFoundError("未找到 FFmpeg，请确保已正确安装并配置环境变量。")
+            local_ffmpeg = (
+                Path(__file__).parent.parent / "resources" / "ffmpeg" / "ffmpeg.exe"
+            )
+            if local_ffmpeg.exists():
+                self.ffmpeg_bin = local_ffmpeg
+            else:
+                raise FileNotFoundError(
+                    "未找到 FFmpeg，请确保已正确安装并配置环境变量。"
+                )
 
     def get_ext(self) -> str:
         ext_map = {"avif": ".avif", "webp": ".webp", "jxl": ".jxl", "heic": ".heic"}

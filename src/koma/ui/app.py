@@ -1,6 +1,5 @@
 import logging
 import os
-import shutil
 import subprocess
 import sys
 import threading
@@ -42,12 +41,6 @@ class KomaGUI:
         self.root = root
         self.root.title(f"KOMA - 漫画工具箱 v{koma.__version__}")
         self.root.geometry("920x680")
-
-        if not shutil.which("ffmpeg"):
-            # messagebox.showwarning(
-            #     "环境缺失", "未检测到 FFmpeg！\n[格式转换] 功能将无法使用。"
-            # )
-            logger.warning("未检测到 FFmpeg！格式转换功能将无法使用。")
 
         self.init_vars()
         self.setup_icon()

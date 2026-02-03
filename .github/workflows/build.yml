@@ -15,45 +15,87 @@ jobs:
     runs-on: windows-latest
     steps:
     - uses: actions/checkout@v6
+
     - name: Install uv
       uses: astral-sh/setup-uv@v7
       with:
         python-version: '3.14'
+
     - name: Install FFmpeg
-      run: choco install ffmpeg
+      shell: powershell
+      run: |
+        Write-Host "Downloading FFmpeg from GitHub (BtbN)..."
+        $Url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
+        $Output = "ffmpeg.zip"
+        Invoke-WebRequest -Uri $Url -OutFile $Output
+        Expand-Archive -Path $Output -DestinationPath "ffmpeg_temp" -Force
+        $FFmpegBin = Get-ChildItem -Path "ffmpeg_temp" -Recurse -Filter "ffmpeg.exe" | Select-Object -ExpandProperty DirectoryName -First 1
+        Write-Host "Found FFmpeg binary at: $FFmpegBin"
+        echo "$FFmpegBin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8
+
     - name: Install dependencies
       run: uv sync --all-extras --all-groups
+
     - name: Lint with Ruff
       run: |
         uvx ruff check .
         uvx ruff format --check .
+
     - name: Run Tests
       run: uv run pytest
       env:
         CI: true
-    - name: Build with PyInstaller
+
+    - name: Build Lite Version (No FFmpeg)
+      env:
+        BUILD_WITH_FFMPEG: "false"
       run: |
         uv run pyinstaller build.spec --clean --noconfirm
+        New-Item -ItemType Directory -Force -Path "staging/Lite"
+        Move-Item -Path "dist/Koma.exe" -Destination "staging/Lite/Koma.exe"
+
+    - name: Build Full Version (With FFmpeg)
+      env:
+        BUILD_WITH_FFMPEG: "true"
+      run: |
+        Remove-Item -Path "dist" -Recurse -ErrorAction SilentlyContinue
+        uv run pyinstaller build.spec --clean --noconfirm
+        New-Item -ItemType Directory -Force -Path "staging/Full"
+        Move-Item -Path "dist/Koma.exe" -Destination "staging/Full/Koma.exe"
+
     - name: Package Application
       id: package
       shell: powershell
       run: |
         $Version = $env:GITHUB_REF_NAME
-        $ZipName = "Koma-Windows-x64_$Version.zip"
-        Write-Host "Packaging: $ZipName"
-        if (Test-Path "dist/Koma.exe") {
-            Compress-Archive -Path "dist/Koma.exe" -DestinationPath "$ZipName" -Force
-        } else {
-            Write-Error "Error: dist/Koma.exe not found!"
-            exit 1
-        }
-        Add-Content -Path $env:GITHUB_ENV -Value "RELEASE_ASSET=$ZipName"
-    - name: Upload Artifact
+
+        $ZipLite = "Koma-Windows-x64_$Version.zip"
+        Write-Host "Zipping Lite: $ZipLite"
+        Compress-Archive -Path "staging/Lite/*" -DestinationPath "$ZipLite" -Force
+
+        $ZipFull = "Koma-Windows-x64-with-FFmpeg_$Version.zip"
+        Write-Host "Zipping Full: $ZipFull"
+        Compress-Archive -Path "staging/Full/*" -DestinationPath "$ZipFull" -Force
+
+        Add-Content -Path $env:GITHUB_ENV -Value "RELEASE_FILES<<EOF"
+        Add-Content -Path $env:GITHUB_ENV -Value "$ZipLite"
+        Add-Content -Path $env:GITHUB_ENV -Value "$ZipFull"
+        Add-Content -Path $env:GITHUB_ENV -Value "EOF"
+
+    - name: Upload Artifact (Lite Version)
       uses: actions/upload-artifact@v6
       with:
-        name: Koma-Build-Artifact
-        path: ${{ env.RELEASE_ASSET }}
+        name: Koma-Lite-Build
+        path: Koma-Windows-x64_*.zip
         if-no-files-found: error
+
+    - name: Upload Artifact (Full Version)
+      uses: actions/upload-artifact@v6
+      with:
+        name: Koma-Full-Build
+        path: Koma-Windows-x64-with-FFmpeg_*.zip
+        if-no-files-found: error
+
     - name: Release Notes
       shell: python
       if: github.ref_type == 'tag'
@@ -77,11 +119,12 @@ jobs:
         except Exception:
             with open("release_notes.txt", "w") as f:
                 f.write(f"Release {tag}")
+
     - name: Release
       uses: softprops/action-gh-release@v2
       if: github.ref_type == 'tag'
       with:
-        files: ${{ env.RELEASE_ASSET }}
+        files: ${{ env.RELEASE_FILES }}
         body_path: release_notes.txt
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

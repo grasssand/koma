@@ -3,7 +3,7 @@
 
 KOMA 是一个专为本地漫画/同人本收藏者设计的整理工具。集成了去广告、格式转换、重命名整理以及归档查重功能。
 
-### ✨ 功能
+## ✨ 功能
 
 #### 1. 🧹 扫描清理
 - **去广告**：集成 WeChatQRCode，能精准识别并剔除漫画尾部的广告二维码。
@@ -29,12 +29,12 @@ KOMA 是一个专为本地漫画/同人本收藏者设计的整理工具。集�
 #### 5. 📖 合集装订
 - 将多个图片、存档、文件夹排序并重命名到单个新文件夹
 
-### 💻 环境要求
+## 💻 环境要求
 - **FFmpeg**: 安装并添加到系统环境变量 PATH 中，或放在 `Koma.exe` 旁。
     - **注意**: 必须使用较新的 FFmpeg 版本，且编译时需开启 `--enable-libsvtav1`，`--enable-libaom`，`--enable-libjxl`，`--enable-libwebp`（通常默认已启用）。
 - **OpenCV 运行库**: Windows 用户通常无需额外操作，程序已内置。
 
-### ⚙️ 配置
+## ⚙️ 配置
 程序启动时会按照以下优先级读取配置文件 `config.toml`：
 - 用户配置目录 (`~/.config/koma/`)
 - 程序所在目录
@@ -42,7 +42,7 @@ KOMA 是一个专为本地漫画/同人本收藏者设计的整理工具。集�
 
 如果未找到，程序会自动在**用户配置目录**下生成一份带有默认值的 `config.toml`。
 
-### 🚀 安装与运行
+## 🚀 安装与运行
 
 #### 方式一：下载可执行文件（推荐普通用户）
 前往 [Releases](https://github.com/grasssand/koma/releases) 页面下载最新的 `Koma.exe` (Windows)，点击即用。请确保 `ffmpeg.exe` 在同级目录或系统路径中。
@@ -74,5 +74,7 @@ uv build
 uv run pyinstaller build.spec
 ```
 
-### 📄 开源协议
-本项目采用 [MIT License](./LICENSE) 开源，二维码识别模型来自 [WeChatCV/opencv_3rdparty](https://github.com/WeChatCV/opencv_3rdparty)，7-Zip (7z.exe, 7z.dll) 来自 [www.7-zip.org](https://www.7-zip.org/) 遵循其各自协议。
+## 📄 开源协议
+本项目采用 [MIT License](./LICENSE) 开源。
+
+二维码识别模型来自 [WeChatCV/opencv_3rdparty](https://github.com/WeChatCV/opencv_3rdparty)，7-Zip (7z.exe, 7z.dll) 来自 [www.7-zip.org](https://www.7-zip.org/) ，FFmpeg (ffmpeg.exe) 来自 [www.ffmpeg.org](https://www.ffmpeg.org/)。遵循其各自协议。
