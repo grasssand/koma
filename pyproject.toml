@@ -26,6 +26,7 @@ dependencies = [
     "opencv-contrib-python-headless>=4.13.0.90",
     "pillow>=12.1.0",
     "send2trash>=2.1.0",
+    "tkinterdnd2>=0.4.3",
 ]
 
 [dependency-groups]
@@ -64,6 +65,7 @@ testpaths = "tests"
 [tool.coverage.run]
 omit = [
     "src/koma/main.py",
+    "src/koma/utils.py",
     "src/koma/__init__.py",
     "src/koma/ui/*",
     "src/koma/utils/logger.py"

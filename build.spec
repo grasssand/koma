@@ -1,14 +1,17 @@
 import os
 import shutil
+import tkinterdnd2
 
 BUILD_WITH_FFMPEG = os.environ.get("BUILD_WITH_FFMPEG", "false").lower() == "true"
 
 block_cipher = None
 
+tkdnd_path = os.path.join(os.path.dirname(tkinterdnd2.__file__), 'tkdnd')
 datas = [
     ("src/koma/resources", "koma/resources"),
 ]
 binaries = [
+    (str(tkdnd_path), "tkinterdnd2/tkdnd"),
     ("src/koma/resources/7z/7z.exe", "koma/resources/7z"),
     ("src/koma/resources/7z/7z.dll", "koma/resources/7z"),
 ]

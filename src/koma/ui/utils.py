@@ -1,41 +1,63 @@
+import logging
+import tkinter as tk
 import tkinter.font as tkfont
 
-from koma.config import FONT
+
+class TextHandler(logging.Handler):
+    """Tkinter 文本框日志处理器"""
+
+    def __init__(self, text_widget):
+        super().__init__()
+        self.text_widget = text_widget
+        self.setFormatter(
+            logging.Formatter("%(asctime)s | %(message)s", datefmt="%m/%d %H:%M:%S")
+        )
+
+    def emit(self, record):
+        msg = self.format(record)
+        self.text_widget.after(0, self._append, msg)
+
+    def _append(self, msg):
+        self.text_widget.configure(state="normal")
+        self.text_widget.insert(tk.END, msg + "\n")
+        self.text_widget.see(tk.END)
+        self.text_widget.configure(state="disabled")
 
 
-def get_sans_font() -> str:
-    """获取系统无衬线字体名称"""
-    available_fonts = set(tkfont.families())
-    preferred_fonts = {
-        FONT,  # 首选用户配置字体
+def get_sans_font(user_font: str | None = None) -> str:
+    """获取系统无衬线字体"""
+    available = set(tkfont.families())
+    candidates = [
+        user_font,
         "Noto Sans CJK SC",
         "Source Han Sans CN",
-        "微软雅黑",  # Windows
-        "Helvetica",  # macOS
-        "Noto Sans",
-        "Liberation Sans",
-    }
-    for font in preferred_fonts:
-        if font in available_fonts:
-            return font
-
+        "Microsoft YaHei UI",
+        "Microsoft YaHei",
+        "PingFang SC",
+        "Heiti SC",
+        "Segoe UI",
+        "Helvetica",
+        "Arial",
+    ]
+    for f in candidates:
+        if f and f in available:
+            return f
     return "TkDefaultFont"
 
 
 def get_monospace_font() -> str:
-    """获取系统等宽字体名称"""
-    available_fonts = set(tkfont.families())
-    preferred_fonts = [
+    """获取等宽字体"""
+    available = set(tkfont.families())
+    candidates = [
         "Maple Mono NF CN",  # 等宽中文字体
-        "DejaVu Sans Mono",
         "Source Code Pro",
-        "Consolas",  # Windows
-        "Menlo",  # macOS
-        "Liberation Mono",
+        "DejaVu Sans Mono",
+        "Consolas",
+        "Cascadia Code",
+        "Menlo",
         "Courier New",
     ]
-    for font in preferred_fonts:
-        if font in available_fonts:
-            return font
-
+    for f in candidates:
+        if f in available:
+            return f
     return "TkFixedFont"
