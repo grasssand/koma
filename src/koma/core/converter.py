@@ -1,16 +1,21 @@
 import concurrent.futures
 import csv
+import logging
 import os
 import shutil
 import subprocess
 import time
+from collections.abc import Callable, Generator
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
-from koma.config import MAX_WORKERS
+from koma.config import ConverterConfig
 from koma.core.command_generator import CommandGenerator
-from koma.utils import analyze_image, logger
+from koma.core.image_processor import ImageProcessor
+from koma.core.scanner import ScanResult
+
+logger = logging.getLogger(__name__)
 
 MAX_RETRIES = 3
 
@@ -58,10 +63,17 @@ class ConversionResult:
         return format_size(self.out_size)
 
     def __str__(self) -> str:
-        name = self.file.name
-        display_name = (name[:35] + "..") if len(name) > 37 else name
+        name = f"{self.file.parent.name}/{self.file.name}"
+        limit = 50
+        if len(name) > limit:
+            remain = limit - 3
+            keep_front = 20
+            keep_end = remain - keep_front
+            display_name = f"{name[:keep_front]}...{name[-keep_end:]}"
+        else:
+            display_name = name
 
-        col_file = f"{display_name:<40}"
+        col_file = f"{display_name:<50}"
         col_in = f"{self.in_size_fmt:>10}"
         col_status = f"{self.status.value:<10}"
 
@@ -80,21 +92,76 @@ class Converter:
         self,
         input_dir: Path,
         output_dir: Path,
-        format_name: str,
-        quality: int,
-        lossless: bool,
+        config: ConverterConfig,
+        image_processor: ImageProcessor,
     ):
+        """
+        初始化转换器
+
+        Args:
+            input_dir: 输入根目录
+            output_dir: 输出根目录
+            config: 转换配置对象
+            image_processor: 图像处理器
+        """
         self.input_dir = Path(input_dir)
         self.output_dir = Path(output_dir)
-        self.cmd_gen = CommandGenerator(format_name, quality, lossless)
+        self.config = config
+        self.image_processor = image_processor
+
+        self.cmd_gen = CommandGenerator(
+            self.config.format, self.config.quality, self.config.lossless
+        )
 
         self.startupinfo = None
         if os.name == "nt":
             self.startupinfo = subprocess.STARTUPINFO()
             self.startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
 
+    def run(
+        self,
+        scanner_generator: Generator[tuple[Path, ScanResult], None, None],
+        progress_callback: Callable[[int, int, str], None] | None = None,
+    ):
+        workers = self.config.actual_workers
+        logger.info(f"🚀 转换器启动 (并发: {workers})")
+
+        all_results = []
+        global_start = time.monotonic()
+        tasks = []
+
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+                for root, result in scanner_generator:
+                    if progress_callback:
+                        progress_callback(0, 0, f"正在分析目录: {root.name}")
+
+                    for p in result.to_copy:
+                        tasks.append(executor.submit(self._copy_worker, p))
+                    for p in result.to_convert:
+                        tasks.append(executor.submit(self._convert_worker, p))
+
+                total_tasks = len(tasks)
+                completed = 0
+
+                for future in concurrent.futures.as_completed(tasks):
+                    res = future.result()
+                    all_results.append(res)
+                    completed += 1
+
+                    if progress_callback:
+                        progress_callback(
+                            completed,
+                            total_tasks,
+                            f"处理中 ({completed}/{total_tasks}): {res.file.name}",
+                        )
+        finally:
+            if progress_callback:
+                progress_callback(1, 1, "任务全部完成")
+
+        self._generate_report(all_results, global_start)
+
     def _log_result(self, res: ConversionResult):
-        """记录日志"""
         if res.status == Status.ERROR:
             logger.error(res)
             # 额外打印一行错误详情
@@ -114,15 +181,21 @@ class Converter:
                 res.error = ""
                 res.in_size = file_path.stat().st_size
 
-                # 计算路径
+                # 计算相对路径，保持目录结构
                 rel_path = file_path.relative_to(self.input_dir)
                 target_folder = self.output_dir / rel_path.parent
                 target_folder.mkdir(parents=True, exist_ok=True)
+
+                # 生成目标文件名
                 target_file = target_folder / (file_path.stem + self.cmd_gen.get_ext())
 
-                # 分析与执行
-                is_anim, is_gray = analyze_image(file_path)
-                cmd = self.cmd_gen.generate(file_path, target_file, is_anim, is_gray)
+                # 使用 ImageProcessor 分析图片属性 (动图/灰度)
+                img_info = self.image_processor.analyze(file_path)
+
+                # 生成 FFmpeg 命令行
+                cmd = self.cmd_gen.generate(
+                    file_path, target_file, img_info.is_animated, img_info.is_grayscale
+                )
 
                 subprocess.run(
                     cmd,
@@ -133,6 +206,7 @@ class Converter:
 
                 if target_file.exists():
                     res.out_size = target_file.stat().st_size
+                    # 如果转换后体积反而变大，标记为 BIGGER
                     res.status = (
                         Status.BIGGER if res.out_size > res.in_size else Status.SUCCESS
                     )
@@ -191,36 +265,6 @@ class Converter:
 
         return res
 
-    def run(self, scanner_generator, progress_callback=None):
-        logger.info(f"🚀 转换器启动 (并发: {MAX_WORKERS})")
-
-        all_results = []
-        global_start = time.monotonic()
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            for root, result in scanner_generator:
-                logger.info("")
-                logger.info(f"📂 {root}")
-                logger.info("-" * 105)
-                logger.info(
-                    f"{'File':<40} | {'Original':>10} | {'Output':>10} | {'Ratio':>10} | {'Status':<10}"
-                )
-                logger.info("-" * 105)
-
-                futures = []
-                for p in result.to_copy:
-                    futures.append(executor.submit(self._copy_worker, p))
-                for p in result.to_convert:
-                    futures.append(executor.submit(self._convert_worker, p))
-
-                for future in concurrent.futures.as_completed(futures):
-                    res = future.result()
-                    all_results.append(res)
-                    if progress_callback:
-                        progress_callback(len(all_results), res.file)
-
-        self._generate_report(all_results, global_start)
-
     def _generate_report(self, results: list[ConversionResult], start_time: float):
         if not results:
             return
@@ -239,7 +283,7 @@ class Converter:
 
             csv_rows.append(
                 [
-                    r.file,
+                    str(r.file),
                     r.in_size_fmt,
                     r.out_size_fmt,
                     f"{r.ratio:.2f}%" if r.ratio else "-",

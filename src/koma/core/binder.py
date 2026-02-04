@@ -1,3 +1,4 @@
+import logging
 import shutil
 import tempfile
 from collections.abc import Callable
@@ -5,46 +6,36 @@ from pathlib import Path
 
 from natsort import natsorted
 
-from koma.config import ARCHIVE_EXTS, SUPPORTED_IMAGE_EXTS
-from koma.utils import logger
-from koma.utils.archive import ArchiveHandler
+from koma.config import ExtensionsConfig
+from koma.core.archive import ArchiveHandler
+
+logger = logging.getLogger(__name__)
 
 
 class Binder:
-    def __init__(self, output_dir: Path):
+    def __init__(
+        self,
+        output_dir: Path,
+        ext_config: ExtensionsConfig,
+        archive_handler: ArchiveHandler,
+    ):
+        """
+        初始化合集装订器
+
+        Args:
+            output_dir: 输出目录
+            ext_config: 扩展名配置
+            archive_handler: 归档处理器
+        """
         self.output_dir = Path(output_dir)
-        self.archive_handler = ArchiveHandler()
-
-    def _is_image(self, path: Path) -> bool:
-        return path.suffix.lower() in SUPPORTED_IMAGE_EXTS
-
-    def _is_archive(self, path: Path) -> bool:
-        return path.suffix.lower() in ARCHIVE_EXTS
-
-    def _scan_folder_images(self, folder: Path) -> list[Path]:
-        """扫描文件夹下仅第一层的图片，并按自然顺序排序"""
-        if not folder.exists():
-            return []
-
-        images = [
-            p
-            for p in folder.iterdir()
-            if p.is_file() and not p.name.startswith(".") and self._is_image(p)
-        ]
-        return natsorted(images)
+        self.ext_config = ext_config
+        self.archive_handler = archive_handler
 
     def run(
         self,
         ordered_paths: list[Path],
         progress_callback: Callable[[int, int, str], None] | None = None,
     ):
-        """
-        执行合集整理
-
-        Args:
-            ordered_paths: 用户排序好的路径列表
-            progress_callback: 回调函数 (current, total, status_msg)
-        """
         if not ordered_paths:
             logger.warning("合集列表为空")
             return
@@ -75,6 +66,8 @@ class Binder:
                             progress_callback(0, 0, f"正在解压: {path.name}...")
 
                         extract_dir = self.archive_handler.extract(path, temp_root)
+
+                        # 扫描解压后的图片
                         imgs = [
                             p
                             for p in extract_dir.rglob("*")
@@ -94,6 +87,7 @@ class Binder:
                 except Exception as e:
                     logger.error(f"处理路径出错 {path}: {e}")
 
+            # 开始导出
             total_count = len(final_sequence)
             if total_count == 0:
                 logger.warning("⚠️ 未找到任何有效图片，任务终止。")
@@ -101,7 +95,9 @@ class Binder:
 
             logger.info(f"✅ 收集完成，共 {total_count} 张图片")
 
+            # 计算序号位数 (至少3位)
             num_digits = max(3, len(str(total_count)))
+
             for index, src_path in enumerate(final_sequence):
                 try:
                     new_stem = f"{index:0{num_digits}d}"
@@ -117,4 +113,24 @@ class Binder:
                 except Exception as e:
                     logger.error(f"复制文件失败 {src_path.name}: {e}")
 
+            if progress_callback:
+                progress_callback(total_count, total_count, "装订整理完成")
+
             logger.info(f"🎉 合集整理完成！输出目录: {self.output_dir}")
+
+    def _is_image(self, path: Path) -> bool:
+        return path.suffix.lower() in self.ext_config.all_supported_img
+
+    def _is_archive(self, path: Path) -> bool:
+        return path.suffix.lower() in self.ext_config.archive
+
+    def _scan_folder_images(self, folder: Path) -> list[Path]:
+        if not folder.exists():
+            return []
+
+        images = [
+            p
+            for p in folder.iterdir()
+            if p.is_file() and not p.name.startswith(".") and self._is_image(p)
+        ]
+        return natsorted(images)

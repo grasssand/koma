@@ -1,4 +1,5 @@
 import shutil
+import sys
 from pathlib import Path
 
 
@@ -10,17 +11,28 @@ class CommandGenerator:
         self.quality = quality
         self.lossless = lossless
 
-        self.ffmpeg_bin = shutil.which("ffmpeg")
+        self.ffmpeg_bin = self._find_ffmpeg()
         if not self.ffmpeg_bin:
-            local_ffmpeg = (
-                Path(__file__).parent.parent / "resources" / "ffmpeg" / "ffmpeg.exe"
-            )
-            if local_ffmpeg.exists():
-                self.ffmpeg_bin = local_ffmpeg
+            raise FileNotFoundError("未找到 FFmpeg，请确保已正确安装并配置环境变量。")
+
+    def _find_ffmpeg(self) -> str | None:
+        """查找 FFmpeg 可执行文件"""
+        if path_in_env := shutil.which("ffmpeg"):
+            return path_in_env
+
+        try:
+            if getattr(sys, "frozen", False):
+                base_path = Path(sys._MEIPASS) / "koma"  # type: ignore
             else:
-                raise FileNotFoundError(
-                    "未找到 FFmpeg，请确保已正确安装并配置环境变量。"
-                )
+                base_path = Path(__file__).parent.parent
+
+            local_ffmpeg = base_path / "resources" / "ffmpeg" / "ffmpeg.exe"
+            if local_ffmpeg.exists():
+                return str(local_ffmpeg)
+        except Exception:
+            pass
+
+        return None
 
     def get_ext(self) -> str:
         ext_map = {"avif": ".avif", "webp": ".webp", "jxl": ".jxl", "heic": ".heic"}
@@ -28,6 +40,9 @@ class CommandGenerator:
 
     def generate(self, src: Path, dst: Path, is_anim: bool, is_gray: bool) -> list[str]:
         """生成 FFmpeg 命令行参数"""
+
+        if not self.ffmpeg_bin:
+            raise RuntimeError("FFmpeg binary path is missing")
 
         cmd = [self.ffmpeg_bin, "-hide_banner", "-y", "-i", str(src)]
 

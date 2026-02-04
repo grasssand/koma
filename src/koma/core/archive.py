@@ -1,26 +1,45 @@
+import logging
 import os
 import shutil
 import subprocess
+import sys
 import zipfile
 from pathlib import Path
 from typing import Literal
 
-from koma.config import SYSTEM_JUNK_FILES
-from koma.utils import logger
+from koma.config import ExtensionsConfig
+
+logger = logging.getLogger(__name__)
 
 
 class ArchiveHandler:
-    def __init__(self):
-        self.seven_zip = shutil.which("7z")
-        if not self.seven_zip:
-            local_7z = Path(__file__).parent.parent / "resources" / "7z" / "7z.exe"
-            if local_7z.exists():
-                self.seven_zip = str(local_7z)
+    def __init__(self, config: "ExtensionsConfig"):
+        self.config = config
+        self.seven_zip = self._find_7z()
 
         if not self.seven_zip:
             logger.warning(
                 "未找到 7-Zip，将使用 Python 原生库 (仅支持 zip/cbz，不支持 .7z 且速度较慢)"
             )
+
+    def _find_7z(self) -> str | None:
+        """查找 7z 可执行文件"""
+        if path_in_env := shutil.which("7z"):
+            return path_in_env
+
+        try:
+            if getattr(sys, "frozen", False):
+                base_path = Path(sys._MEIPASS) / "koma"  # type: ignore
+            else:
+                base_path = Path(__file__).parent.parent
+
+            local_7z = base_path / "resources" / "7z" / "7z.exe"
+            if local_7z.exists():
+                return str(local_7z)
+        except Exception:
+            pass
+
+        return None
 
     def _get_creation_flags(self):
         """Windows 下隐藏 subprocess 黑框"""
@@ -68,7 +87,7 @@ class ArchiveHandler:
         try:
             output_path.parent.mkdir(parents=True, exist_ok=True)
 
-            exclude_args = [f"-xr!{name}" for name in SYSTEM_JUNK_FILES]
+            exclude_args = [f"-xr!{name}" for name in self.config.system_junk]
 
             cmd = [
                 self.seven_zip,
@@ -76,8 +95,8 @@ class ArchiveHandler:
                 str(output_path),
                 ".",  # 添加当前目录下的所有内容 (配合 cwd 使用)
                 f"-t{fmt}",  # 格式: -tzip, -t7z
-                f"-mx={level}",  # 压缩等级: -mx=0 ~ -mx=9
-                "-mmt=on",  # 开启多线程
+                f"-mx={level}",  # 压缩等级
+                "-mmt=on",  # 多线程
                 "-bsp0",  # 禁用进度输出
                 "-bso0",  # 禁用标准输出
             ] + exclude_args
@@ -102,7 +121,7 @@ class ArchiveHandler:
             with zipfile.ZipFile(output_path, "w", compression) as zf:
                 for root, _, files in os.walk(source_dir):
                     for file in files:
-                        if file.lower() in SYSTEM_JUNK_FILES:
+                        if file.lower() in self.config.system_junk:
                             continue
 
                         file_path = Path(root) / file
@@ -134,7 +153,7 @@ class ArchiveHandler:
         items = [
             x
             for x in container_dir.iterdir()
-            if x.name.lower() not in SYSTEM_JUNK_FILES
+            if x.name.lower() not in self.config.system_junk
         ]
 
         if len(items) == 1 and items[0].is_dir():
@@ -149,16 +168,7 @@ class ArchiveHandler:
         fmt: Literal["zip", "7z", "cbz"] = "cbz",
         level: int = 0,
     ) -> bool:
-        """
-        通用打包函数
-
-        Args:
-            source_dir: 要打包的文件夹路径
-            output_path: 输出文件路径
-            fmt: 格式 'zip', '7z', 'cbz' (默认 cbz)
-            level: 压缩等级 0-9 (0=存储/无压缩, 5=标准, 9=极限)。
-                   对于漫画图片，建议使用 0，因为图片已经是压缩格式，再次压缩只会浪费 CPU。
-        """
+        """通用打包入口"""
         real_fmt = "zip" if fmt == "cbz" else fmt
 
         if self.seven_zip:

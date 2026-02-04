@@ -7,15 +7,9 @@ from pathlib import Path
 
 import tomllib
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)-8s | %(message)s",
-    datefmt="%m/%d %H:%M:%S",
-)
-
 CONFIG_FILENAME = "config.toml"
 OUTPUT_FORMATS = ["avif (svt)", "avif (aom)", "webp", "jxl"]
-COMIC_TITLE_RE = re.compile(
+DEFAULT_COMIC_REGEX = (
     r"(\((?P<event>[^([]+)\))?"
     r"\s*"
     r"(\[(?P<artist>[^]]+)\])?"
@@ -26,7 +20,7 @@ COMIC_TITLE_RE = re.compile(
     r"\s*"
     r"(\[(?P<language>[^]]+)\])?"
     r"\s*"
-    r"(?P<tail>.*)?"  # tail
+    r"(?P<tail>.*)?"
 )
 
 # 默认 TOML 模版
@@ -50,6 +44,10 @@ format = "{converter.format}"
 quality = {converter.quality}
 # 无损模式
 lossless = {converter_lossless_str}
+
+[deduplicator]
+# 查重文件夹/文件名解析正则
+comic_dir_regex = '''{deduplicator.comic_dir_regex}'''
 
 [extensions]
 # 需要转换的格式
@@ -81,7 +79,6 @@ class AppConfig:
 
     def __post_init__(self):
         if not isinstance(self.font_size, int) or self.font_size <= 0:
-            logging.warning(f"AppConfig: font_size '{self.font_size}' 无效，重置为 10")
             self.font_size = 10
 
 
@@ -94,17 +91,29 @@ class ConverterConfig:
 
     def __post_init__(self):
         if self.format not in OUTPUT_FORMATS:
-            logging.warning(f"ConverterConfig: 不支持格式 '{self.format}'，重置默认")
             self.format = "avif (svt)"
         if not (1 <= self.quality <= 100):
             self.quality = 75
 
     @property
     def actual_workers(self) -> int:
+        """计算实际使用的线程数"""
         if self.max_workers > 0:
             return self.max_workers
         count = os.cpu_count() or 4
+        # 默认使用 75% 的核心，避免卡死系统
         return max(1, int(count * 0.75))
+
+
+@dataclass
+class DeduplicatorConfig:
+    comic_dir_regex: str = DEFAULT_COMIC_REGEX
+
+    def __post_init__(self):
+        try:
+            re.compile(self.comic_dir_regex)
+        except re.error:
+            self.comic_dir_regex = DEFAULT_COMIC_REGEX
 
 
 @dataclass
@@ -145,7 +154,7 @@ class ExtensionsConfig:
         default_factory=lambda: {".pdf", ".epub", ".azw3", ".mobi"}
     )
     misc_whitelist: set[str] = field(
-        default_factory=lambda: {"comicinfo.xml", "readme.txt", "readme.md"}
+        default_factory=lambda: {"comicinfo.xml", "readme.md", "readme.txt"}
     )
     system_junk: set[str] = field(
         default_factory=lambda: {".ds_store", "thumbs.db", "__macosx", "desktop.ini"}
@@ -159,6 +168,7 @@ class ExtensionsConfig:
 
     @property
     def all_supported_img(self) -> set[str]:
+        """所有支持的图片格式"""
         return self.convert | self.passthrough
 
 
@@ -208,27 +218,25 @@ class ScannerConfig:
 
 @dataclass
 class GlobalConfig:
+    """根配置对象"""
+
     app: AppConfig = field(default_factory=AppConfig)
     converter: ConverterConfig = field(default_factory=ConverterConfig)
+    deduplicator: DeduplicatorConfig = field(default_factory=DeduplicatorConfig)
     extensions: ExtensionsConfig = field(default_factory=ExtensionsConfig)
     scanner: ScannerConfig = field(default_factory=ScannerConfig)
 
 
 class ConfigManager:
-    _instance = None
-    config_path: Path
-    data: GlobalConfig
-
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance.config_path = cls._find_config_path()
-            cls._instance.data = cls._instance._load()
-        return cls._instance
+    def __init__(self, filename: str = CONFIG_FILENAME):
+        self.config_path = self._find_config_path(filename)
 
     @staticmethod
-    def _find_config_path() -> Path:
-        """定位配置文件路径"""
+    def _find_config_path(filename: str) -> Path:
+        """
+        定位配置文件路径。
+        优先级: 用户配置目录 > 程序所在目录 > 当前工作目录
+        """
         if getattr(sys, "frozen", False):
             app_dir = Path(sys.executable).parent
         else:
@@ -240,57 +248,54 @@ class ConfigManager:
         )
 
         candidates = [
-            user_config_dir / CONFIG_FILENAME,
-            app_dir / CONFIG_FILENAME,
-            Path.cwd() / CONFIG_FILENAME,
+            user_config_dir / filename,
+            app_dir / filename,
+            Path.cwd() / filename,
         ]
 
         for path in candidates:
             if path.exists():
                 return path
 
+        # 如果都不存在，默认使用第一个路径（用户配置目录）
         return candidates[0]
 
-    def _load(self) -> GlobalConfig:
-        """加载或创建默认配置"""
+    def load(self) -> GlobalConfig:
+        """
+        加载配置。
+        如果文件不存在或解析错误，返回默认配置。
+        """
         if not self.config_path.exists():
-            self._create_default()
-            logging.info(f"📄 已创建默认配置: {self.config_path}")
-            return GlobalConfig()
+            return self.get_default_config()
 
         try:
             with open(self.config_path, "rb") as f:
                 raw_data = tomllib.load(f)
 
-            logging.info(f"✅ 已加载配置文件: {self.config_path}")
             return GlobalConfig(
                 app=AppConfig(**raw_data.get("app", {})),
                 converter=ConverterConfig(**raw_data.get("converter", {})),
+                deduplicator=DeduplicatorConfig(**raw_data.get("deduplicator", {})),
                 extensions=ExtensionsConfig(**raw_data.get("extensions", {})),
                 scanner=ScannerConfig(**raw_data.get("scanner", {})),
             )
         except Exception as e:
-            logging.error(f"❌ 加载配置文件失败: {e}，使用默认配置")
-            return GlobalConfig()
+            logging.error(f"❌ 加载配置文件失败: {e}，将使用默认配置")
+            return self.get_default_config()
 
-    def _create_default(self):
-        """创建默认配置文件"""
-        default_cfg = GlobalConfig()
-        self.save(default_cfg)
+    def save(self, cfg: GlobalConfig) -> None:
+        """将配置对象保存到磁盘"""
 
-    def save(self, cfg: GlobalConfig | None = None):
-        """保存配置到磁盘"""
-        if cfg is None:
-            cfg = self.data
-
-        def fmt_list(items):
+        def fmt_list(items) -> str:
             quoted = [f'"{x}"' for x in sorted(items)]
             return "[\n    " + ",\n    ".join(quoted) + "\n]"
 
+        # 使用模版填充数据
         content = TOML_TEMPLATE.format(
             app=cfg.app,
             converter=cfg.converter,
             converter_lossless_str="true" if cfg.converter.lossless else "false",
+            deduplicator=cfg.deduplicator,
             scanner_enable_str="true" if cfg.scanner.enable_ad_scan else "false",
             ext_convert=fmt_list(cfg.extensions.convert),
             ext_passthrough=fmt_list(cfg.extensions.passthrough),
@@ -305,43 +310,22 @@ class ConfigManager:
             self.config_path.parent.mkdir(parents=True, exist_ok=True)
             with open(self.config_path, "w", encoding="utf-8") as f:
                 f.write(content)
-
-            self.data = cfg
             logging.info(f"💾 配置已保存至: {self.config_path}")
         except Exception as e:
             logging.error(f"❌ 保存配置失败: {e}")
 
+    def get_default_config(self) -> GlobalConfig:
+        """获取一份全新的默认配置"""
+        return GlobalConfig()
 
-_manager = ConfigManager()
-_cfg = _manager.data
+    def get_default_section(self, section_name: str):
+        """
+        获取某个子配置段的默认值。
 
-
-def save_config(cfg: GlobalConfig):
-    _manager.save(cfg)
-
-
-def find_config_path():
-    return _manager.config_path
-
-
-# 导出变量
-FONT = _cfg.app.font
-FONT_SIZE = _cfg.app.font_size
-
-MAX_WORKERS = _cfg.converter.actual_workers
-CONVERTER_CFG = {
-    "format": _cfg.converter.format,
-    "quality": _cfg.converter.quality,
-    "lossless": _cfg.converter.lossless,
-}
-
-CONVERT_EXTS = _cfg.extensions.convert
-PASSTHROUGH_EXTS = _cfg.extensions.passthrough
-SUPPORTED_IMAGE_EXTS = _cfg.extensions.all_supported_img
-ARCHIVE_EXTS = _cfg.extensions.archive
-DOCUMENT_EXTS = _cfg.extensions.document
-MISC_WHITELIST_FILES = _cfg.extensions.misc_whitelist
-SYSTEM_JUNK_FILES = _cfg.extensions.system_junk
-
-ENABLE_AD_SCAN = _cfg.scanner.enable_ad_scan
-QR_WHITELIST = _cfg.scanner.qr_whitelist
+        Usage:
+            default_scanner = manager.get_default_section("scanner")
+        """
+        defaults = GlobalConfig()
+        if hasattr(defaults, section_name):
+            return getattr(defaults, section_name)
+        raise ValueError(f"Config section '{section_name}' not found")

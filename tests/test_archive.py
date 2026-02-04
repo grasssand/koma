@@ -4,32 +4,33 @@ from unittest.mock import patch
 
 import pytest
 
-from koma.utils.archive import ArchiveHandler
+from koma.core.archive import ArchiveHandler
 
 
 @pytest.fixture
-def archive_handler():
+def handler_no_7z(ext_config):
+    """强制使用 Python 原生 Zip 的 Handler"""
     with patch("shutil.which", return_value=None):
-        handler = ArchiveHandler()
-        return handler
+        with patch.object(ArchiveHandler, "_find_7z", return_value=None):
+            return ArchiveHandler(ext_config)
 
 
-def test_init_detection():
+@pytest.fixture
+def handler_with_7z(ext_config):
+    """强制认为有 7z 的 Handler"""
+    with patch.object(ArchiveHandler, "_find_7z", return_value="/usr/bin/7z"):
+        return ArchiveHandler(ext_config)
+
+
+def test_init_detection(ext_config):
     """测试初始化时的 7z 检测逻辑"""
-    # 系统有 7z
-    with patch("shutil.which", return_value="/usr/bin/7z"):
-        h = ArchiveHandler()
-        assert h.seven_zip == "/usr/bin/7z"
-
-    # 系统无 7z
-    with patch("shutil.which", return_value=None):
-        with patch("pathlib.Path.exists", return_value=False):
-            h = ArchiveHandler()
-            assert h.seven_zip is None
+    with patch("shutil.which", return_value="/bin/7z"):
+        h = ArchiveHandler(ext_config)
+        assert h.seven_zip == "/bin/7z"
 
 
-def test_extract_nested(tmp_path, archive_handler):
-    """测试解压：嵌套结构"""
+def test_extract_smart_folder_nested(tmp_path, handler_no_7z):
+    """测试智能解压：嵌套结构"""
     archive_path = tmp_path / "comic.zip"
     temp_root = tmp_path / "temp"
 
@@ -38,19 +39,19 @@ def test_extract_nested(tmp_path, archive_handler):
     inner.mkdir(parents=True)
     (inner / "01.jpg").touch()
 
-    # 系统垃圾文件应被忽略
+    # 模拟垃圾文件
     (container / "__MACOSX").mkdir()
     (container / "Thumbs.db").touch()
 
-    with patch.object(archive_handler, "_extract_7z", return_value=True):
-        result_path = archive_handler.extract(archive_path, temp_root)
+    with patch.object(handler_no_7z, "_extract_zipfile", return_value=True):
+        result_path = handler_no_7z.extract(archive_path, temp_root)
 
         assert result_path == inner
         assert result_path.name == "InnerFolder"
 
 
-def test_extract_flat(tmp_path, archive_handler):
-    """测试解压：散乱结构"""
+def test_extract_smart_folder_flat(tmp_path, handler_no_7z):
+    """测试智能解压：散乱结构"""
     archive_path = tmp_path / "comic.zip"
     temp_root = tmp_path / "temp"
 
@@ -59,130 +60,95 @@ def test_extract_flat(tmp_path, archive_handler):
     (container / "01.jpg").touch()
     (container / "02.jpg").touch()
 
-    with patch.object(archive_handler, "_extract_7z", return_value=True):
-        result_path = archive_handler.extract(archive_path, temp_root)
+    with patch.object(handler_no_7z, "_extract_zipfile", return_value=True):
+        result_path = handler_no_7z.extract(archive_path, temp_root)
 
         assert result_path == container
         assert result_path.name == "comic"
 
 
-def test_pack_zip_fallback(tmp_path, archive_handler):
-    """测试 Python 原生 zip 打包"""
-    source_dir = tmp_path / "src"
-    source_dir.mkdir()
-    (source_dir / "1.jpg").write_text("fake image")
-    (source_dir / "sub").mkdir()
-    (source_dir / "sub" / "2.png").write_text("fake png")
+def test_7z_command_generation(tmp_path, handler_with_7z):
+    """测试 7z 命令生成是否正确"""
+    src = tmp_path / "src"
+    out = tmp_path / "out.cbz"
 
-    # 垃圾文件 (应被忽略)
-    (source_dir / "Thumbs.db").touch()
+    with patch("subprocess.run") as mock_run:
+        handler_with_7z.pack(src, out, fmt="cbz", level=0)
 
-    output_cbz = tmp_path / "output.cbz"
+        args, kwargs = mock_run.call_args
+        cmd = args[0]
 
-    # 执行打包
-    success = archive_handler.pack(source_dir, output_cbz, fmt="cbz")
-
-    assert success is True
-    assert output_cbz.exists()
-
-    # 验证 zip 内容
-    with zipfile.ZipFile(output_cbz, "r") as zf:
-        names = zf.namelist()
-        assert "1.jpg" in names
-        assert "sub/2.png" in names
-        assert "Thumbs.db" not in names
+        assert cmd[0] == "/usr/bin/7z"
+        assert "a" in cmd
+        assert "-tzip" in cmd  # cbz 对应 zip
+        assert "-mx=0" in cmd
+        assert kwargs["cwd"] == str(src)
 
 
-def test_pack_7z_call(tmp_path):
-    """测试当存在 7z 时是否正确构建命令"""
-    with patch("shutil.which", return_value="7z"):
-        handler = ArchiveHandler()
-
-        with patch("subprocess.run") as mock_run:
-            src = tmp_path / "src"
-            out = tmp_path / "out.cbz"
-
-            handler.pack(src, out, fmt="cbz", level=0)
-
-            # 验证命令参数
-            args, kwargs = mock_run.call_args
-            cmd = args[0]
-
-            assert cmd[0] == "7z"
-            assert cmd[1] == "a"
-            assert "-tzip" in cmd  # cbz -> zip
-            assert "-mx=0" in cmd
-            assert kwargs["cwd"] == str(src)  # 确保是在源目录内执行
-
-
-# ==========================================
-# 真实环境测试 (Integration Tests)
-# 这些测试会真正创建文件并调用解压
-# ==========================================
-
-
-def test_real_zipfile_extract_and_pack(tmp_path):
-    """测试 Python 原生 zipfile 的真实读写能力"""
+def test_real_zip_pack_filtering(tmp_path, handler_no_7z):
+    """测试真实打包：验证垃圾文件过滤功能"""
     src_dir = tmp_path / "source"
     src_dir.mkdir()
-    (src_dir / "test.txt").write_text("hello world", encoding="utf-8")
-    (src_dir / "image.jpg").write_bytes(b"fake image data")
 
-    # 干扰文件
+    (src_dir / "01.jpg").write_bytes(b"image")
+    (src_dir / "info.txt").write_text("info")
     (src_dir / "Thumbs.db").touch()
+    (src_dir / "desktop.ini").touch()
+    (src_dir / ".ds_store").touch()
 
-    # 测试打包
-    archive_path = tmp_path / "output.cbz"
-    handler = ArchiveHandler()
+    out_cbz = tmp_path / "output.cbz"
 
-    success = handler._pack_zipfile(src_dir, archive_path, level=0)
+    success = handler_no_7z.pack(src_dir, out_cbz, fmt="cbz")
 
     assert success is True
-    assert archive_path.exists()
+    assert out_cbz.exists()
 
-    # 验证打包内容
-    with zipfile.ZipFile(archive_path, "r") as zf:
+    with zipfile.ZipFile(out_cbz, "r") as zf:
         names = zf.namelist()
-        assert "test.txt" in names
-        assert "image.jpg" in names
-        assert "Thumbs.db" not in names  # 应该被过滤
-
-    # 测试解压
-    extract_dir = tmp_path / "extracted"
-    extract_dir.mkdir()
-
-    success = handler._extract_zipfile(archive_path, extract_dir)
-
-    assert success is True
-    assert (extract_dir / "test.txt").read_text(encoding="utf-8") == "hello world"
+        assert "01.jpg" in names
+        assert "info.txt" in names
+        # 确认垃圾文件没被打包进去
+        assert "Thumbs.db" not in names
+        assert "desktop.ini" not in names
+        assert ".ds_store" not in names
 
 
-@pytest.mark.skipif(
-    not shutil.which("7z") and not shutil.which("7za"),
-    reason="系统未安装 7z，跳过真实 7z 测试",
-)
-def test_real_7z_extract_and_pack(tmp_path):
-    """测试 7-Zip 的真实调用"""
-    handler = ArchiveHandler()
-    if not handler.seven_zip:
-        pytest.skip("ArchiveHandler 未找到 7z 可执行文件")
+def test_real_zip_extract(tmp_path, handler_no_7z):
+    """测试真实解压"""
+    zip_path = tmp_path / "test.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.writestr("folder/a.txt", "content a")
+        zf.writestr("b.txt", "content b")
+
+    extract_root = tmp_path / "extract_root"
+    result_path = handler_no_7z.extract(zip_path, extract_root)
+
+    assert result_path.name == "test"
+    assert (result_path / "folder" / "a.txt").read_text() == "content a"
+    assert (result_path / "b.txt").read_text() == "content b"
+
+
+has_7z = shutil.which("7z") is not None
+
+
+@pytest.mark.skipif(not has_7z, reason="系统未安装 7z，跳过真实 7z 测试")
+def test_real_7z_pack_and_extract(tmp_path, ext_config):
+    """真实调用系统 7z 进行打包和解压"""
+    handler = ArchiveHandler(ext_config)
 
     src_dir = tmp_path / "src_7z"
     src_dir.mkdir()
-    (src_dir / "data.png").write_bytes(b"png data")
+    (src_dir / "cover.jpg").write_bytes(b"data")
+    (src_dir / "junk.db").touch()  # 假设这不是垃圾文件
 
     archive_path = tmp_path / "test.7z"
-
-    # 测试 7z 打包
-    success = handler.pack(src_dir, archive_path, fmt="7z", level=0)
-
-    assert success is True
+    success_pack = handler.pack(src_dir, archive_path, fmt="7z")
+    assert success_pack is True
     assert archive_path.exists()
 
-    # 测试 7z 解压
-    out_dir = tmp_path / "out_7z"
-    out_dir.mkdir()
+    extract_root = tmp_path / "out_7z"
+    result_path = handler.extract(archive_path, extract_root)
 
-    success = handler.extract(archive_path, out_dir)
-
-    assert (success / "data.png").exists()
+    assert result_path.name == "test"
+    assert (result_path / "cover.jpg").exists()
+    assert (result_path / "cover.jpg").read_bytes() == b"data"
