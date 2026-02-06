@@ -159,7 +159,7 @@ class ArchiveHandler:
         try:
             output_path.parent.mkdir(parents=True, exist_ok=True)
             with zipfile.ZipFile(output_path, "w", zip_method) as zf:
-                for root, _, files in os.walk(source_dir):
+                for root, _, files in source_dir.walk():
                     for file in files:
                         if file.lower() in self.config.system_junk:
                             continue

@@ -1,5 +1,4 @@
 import logging
-import os
 import re
 from collections import defaultdict
 from collections.abc import Callable
@@ -52,7 +51,7 @@ class Deduplicator:
             if progress_callback:
                 progress_callback(0, 0, f"正在扫描根目录: {root.name}...")
 
-            for dirpath, dirnames, filenames in os.walk(root):
+            for dirpath, dirnames, filenames in root.walk():
                 dirnames[:] = [d for d in dirnames if not d.startswith(".")]
                 current_dir = Path(dirpath)
 

@@ -1,5 +1,4 @@
 import logging
-import os
 import shutil
 import tempfile
 from collections.abc import Callable, Generator
@@ -22,6 +21,7 @@ class ScanResult:
     to_copy: list[Path] = field(default_factory=list)
     ads: list[Path] = field(default_factory=list)
     junk: list[Path] = field(default_factory=list)
+    archives: list[Path] = field(default_factory=list)
     processed_archives: int = 0
 
 
@@ -62,7 +62,7 @@ class Scanner:
         exclude_path = Path(out_dir_str).resolve() if out_dir_str else None
 
         try:
-            for root, dirs, files in os.walk(self.input_dir):
+            for root, dirs, files in self.input_dir.walk():
                 root_path = Path(root).resolve()
                 if exclude_path:
                     try:
@@ -87,9 +87,14 @@ class Scanner:
                     f_path = root_path / f
 
                     # 压缩包扫描
-                    if enable_archive_scan and self._is_archive(f_path):
-                        if self._process_archive(f_path, options):
+                    if self._is_archive(f_path):
+                        result.archives.append(f_path)
+
+                        if enable_archive_scan and self._process_archive(
+                            f_path, options
+                        ):
                             result.processed_archives += 1
+
                         continue
 
                     # 常规文件扫描
@@ -119,6 +124,7 @@ class Scanner:
                     or result.to_copy
                     or result.ads
                     or result.junk
+                    or result.archives
                     or result.processed_archives > 0
                 ):
                     yield root_path, result
@@ -206,7 +212,7 @@ class Scanner:
         """递归清理临时目录中的垃圾和广告"""
         deleted_count = 0
 
-        for root, _, files in os.walk(target_dir):
+        for root, _, files in target_dir.walk():
             root_path = Path(root)
             files = natsorted(files)
 
@@ -217,7 +223,7 @@ class Scanner:
                 f_path = root_path / f
                 if self._is_junk(f_path):
                     try:
-                        os.remove(f_path)
+                        f_path.unlink()
                         deleted_count += 1
                         logger.debug(f"[TempClean] 删除杂项: {f}")
                     except OSError:
@@ -230,7 +236,7 @@ class Scanner:
                 ads = self._detect_ads_in_folder(root_path, image_candidates)
                 for ad in ads:
                     try:
-                        os.remove(root_path / ad)
+                        (root_path / ad).unlink()
                         deleted_count += 1
                         logger.debug(f"[TempClean] 删除广告: {ad}")
                     except OSError:
