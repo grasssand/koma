@@ -23,7 +23,7 @@ class KomaGUI:
     def __init__(self, root):
         self.root = root
         self.root.title(f"KOMA - 漫画工具箱 v{koma.__version__}")
-        self.root.geometry("900x720")
+        self.root.geometry("900x800")
 
         self.cfg_manager = ConfigManager()
         self.config = self.cfg_manager.load()

@@ -7,6 +7,7 @@ repos:
         language: system
         types: [python]
         require_serial: true
+        stages: [pre-commit]
 
       - id: ruff-format
         name: Ruff Format
@@ -14,6 +15,7 @@ repos:
         language: system
         types: [python]
         require_serial: true
+        stages: [pre-commit]
 
       - id: commitizen
         name: Commitizen check

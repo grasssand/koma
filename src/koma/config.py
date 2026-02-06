@@ -7,7 +7,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 CONFIG_FILENAME = "config.toml"
-OUTPUT_FORMATS = ["avif (svt)", "avif (aom)", "webp", "jxl"]
+
+# 图片输出格式
+IMG_OUTPUT_FORMATS = ["avif (svt)", "avif (aom)", "webp", "jxl"]
+
+# 归档输出格式
+ARCHIVE_OUTPUT_FORMATS = ["zip", "cbz", "7z", "cb7"]
+
+# 文件名查重匹配正则
 DEFAULT_COMIC_REGEX = (
     r"(\((?P<event>[^([]+)\))?"
     r"\s*"
@@ -65,7 +72,9 @@ system_junk = {ext_junk}
 
 [scanner]
 # 是否开启广告扫描
-enable_ad_scan = {scanner_enable_str}
+enable_ad_scan = {scanner_enable_ad_str}
+# 是否开启压缩包扫描
+enable_archive_scan = {scanner_enable_archive_str}
 # 二维码白名单 (包含这些域名的二维码不视为广告)
 qr_whitelist = {scanner_qr}
 """
@@ -89,7 +98,7 @@ class ConverterConfig:
     lossless: bool = False
 
     def __post_init__(self):
-        if self.format not in OUTPUT_FORMATS:
+        if self.format not in IMG_OUTPUT_FORMATS:
             self.format = "avif (svt)"
         if not (1 <= self.quality <= 100):
             self.quality = 75
@@ -174,6 +183,7 @@ class ExtensionsConfig:
 @dataclass
 class ScannerConfig:
     enable_ad_scan: bool = False
+    enable_archive_scan: bool = False
     qr_whitelist: list[str] = field(
         default_factory=lambda: [
             "bilibili.com",
@@ -295,7 +305,10 @@ class ConfigManager:
             converter=cfg.converter,
             converter_lossless_str="true" if cfg.converter.lossless else "false",
             deduplicator=cfg.deduplicator,
-            scanner_enable_str="true" if cfg.scanner.enable_ad_scan else "false",
+            scanner_enable_ad_str="true" if cfg.scanner.enable_ad_scan else "false",
+            scanner_enable_archive_str="true"
+            if cfg.scanner.enable_archive_scan
+            else "false",
             ext_convert=fmt_list(cfg.extensions.convert),
             ext_passthrough=fmt_list(cfg.extensions.passthrough),
             ext_archive=fmt_list(cfg.extensions.archive),

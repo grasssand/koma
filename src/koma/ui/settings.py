@@ -1,7 +1,7 @@
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from koma.config import OUTPUT_FORMATS, ConfigManager, GlobalConfig
+from koma.config import IMG_OUTPUT_FORMATS, ConfigManager, GlobalConfig
 from koma.ui.utils import get_monospace_font
 from koma.utils import logger
 
@@ -138,7 +138,7 @@ class SettingsDialog(tk.Toplevel):
         ttk.Combobox(
             f2,
             textvariable=self.format_var,
-            values=OUTPUT_FORMATS,
+            values=IMG_OUTPUT_FORMATS,
             state="readonly",
             width=15,
         ).pack(side="left", padx=5)

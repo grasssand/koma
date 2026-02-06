@@ -3,7 +3,7 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import messagebox, ttk
 
-from koma.config import OUTPUT_FORMATS
+from koma.config import IMG_OUTPUT_FORMATS
 from koma.core.converter import Converter
 from koma.core.scanner import Scanner
 from koma.ui.base_tab import BaseTab
@@ -39,7 +39,7 @@ class ConvertTab(BaseTab):
         self._setup_dnd(e_in, self.input_var)
         ttk.Button(
             grp_path,
-            text="...",
+            text="选择...",
             width=4,
             command=lambda: self.select_dir(self.input_var),
         ).grid(row=0, column=2)
@@ -50,7 +50,7 @@ class ConvertTab(BaseTab):
         self._setup_dnd(e_out, self.output_var)
         ttk.Button(
             grp_path,
-            text="...",
+            text="选择...",
             width=4,
             command=lambda: self.select_dir(self.output_var),
         ).grid(row=1, column=2)
@@ -68,7 +68,7 @@ class ConvertTab(BaseTab):
         ttk.Combobox(
             f_row,
             textvariable=self.format_var,
-            values=OUTPUT_FORMATS,
+            values=IMG_OUTPUT_FORMATS,
             width=10,
             state="readonly",
         ).pack(side="left", padx=5)

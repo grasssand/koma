@@ -75,7 +75,7 @@ def test_7z_command_generation(tmp_path, handler_with_7z):
     out = tmp_path / "out.cbz"
 
     with patch("subprocess.run") as mock_run:
-        handler_with_7z.pack(src, out, fmt="cbz", level=0)
+        handler_with_7z.pack(src, out, fmt="cbz", level="normal")
 
         args, kwargs = mock_run.call_args
         cmd = args[0]
@@ -83,7 +83,7 @@ def test_7z_command_generation(tmp_path, handler_with_7z):
         assert cmd[0] == "/usr/bin/7z"
         assert "a" in cmd
         assert "-tzip" in cmd  # cbz 对应 zip
-        assert "-mx=0" in cmd
+        assert "-mx=5" in cmd
         assert kwargs["cwd"] == str(src)
 
 
