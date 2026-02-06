@@ -2,10 +2,9 @@ import logging
 import os
 import re
 import sys
+import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
-
-import tomllib
 
 CONFIG_FILENAME = "config.toml"
 OUTPUT_FORMATS = ["avif (svt)", "avif (aom)", "webp", "jxl"]

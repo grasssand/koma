@@ -70,8 +70,8 @@ class CommandGenerator:
             pix_fmt = "yuv420p10le"
 
             # SVT-AV1 速度快
-            if "svt" in fmt_full or "avif" == fmt_full:  # 默认 SVT
-                svt_params = ["tune=0", "lp=2"]  # Visual tuning, Lookahead
+            if "svt" in fmt_full or fmt_full == "avif":
+                svt_params = ["tune=0", "lp=2"]
 
                 if lossless or quality >= 100:
                     crf = 0

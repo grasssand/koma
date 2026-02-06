@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 MAX_RETRIES = 3
 
 
-class Status(str, Enum):
+class Status(Enum):
     PENDING = "⏳ PENDING"
     SUCCESS = "✅ SUCCESS"
     ERROR = "❌ ERROR"
@@ -142,12 +142,12 @@ class Converter:
                         tasks.append(executor.submit(self._convert_worker, p))
 
                 total_tasks = len(tasks)
-                completed = 0
 
-                for future in concurrent.futures.as_completed(tasks):
+                for completed, future in enumerate(
+                    concurrent.futures.as_completed(tasks), start=1
+                ):
                     res = future.result()
                     all_results.append(res)
-                    completed += 1
 
                     if progress_callback:
                         progress_callback(

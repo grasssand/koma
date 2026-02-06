@@ -54,7 +54,7 @@ class ArchiveHandler:
                 self.seven_zip,
                 "x",
                 str(archive_path),
-                f"-o{str(output_dir)}",
+                f"-o{output_dir!s}",
                 "-y",
                 "-aoa",
             ]
@@ -93,13 +93,14 @@ class ArchiveHandler:
                 self.seven_zip,
                 "a",  # 添加文件
                 str(output_path),
-                ".",  # 添加当前目录下的所有内容 (配合 cwd 使用)
+                ".",  # 添加当前目录下的所有内容
                 f"-t{fmt}",  # 格式: -tzip, -t7z
                 f"-mx={level}",  # 压缩等级
                 "-mmt=on",  # 多线程
                 "-bsp0",  # 禁用进度输出
                 "-bso0",  # 禁用标准输出
-            ] + exclude_args
+                *exclude_args,
+            ]
 
             subprocess.run(
                 cmd,

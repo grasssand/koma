@@ -10,9 +10,11 @@ from koma.core.archive import ArchiveHandler
 @pytest.fixture
 def handler_no_7z(ext_config):
     """强制使用 Python 原生 Zip 的 Handler"""
-    with patch("shutil.which", return_value=None):
-        with patch.object(ArchiveHandler, "_find_7z", return_value=None):
-            return ArchiveHandler(ext_config)
+    with (
+        patch("shutil.which", return_value=None),
+        patch.object(ArchiveHandler, "_find_7z", return_value=None),
+    ):
+        return ArchiveHandler(ext_config)
 
 
 @pytest.fixture

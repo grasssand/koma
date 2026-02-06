@@ -14,9 +14,11 @@ def mock_ffmpeg():
 
 def test_no_ffmpeg_error():
     """测试未找到 FFmpeg 时的报错"""
-    with patch("shutil.which", return_value=None):
-        with pytest.raises(FileNotFoundError, match="未找到 FFmpeg"):
-            CommandGenerator("avif", 75, False)
+    with (
+        patch("shutil.which", return_value=None),
+        pytest.raises(FileNotFoundError, match="未找到 FFmpeg"),
+    ):
+        CommandGenerator("avif", 75, False)
 
 
 def test_avif_svt_normal():

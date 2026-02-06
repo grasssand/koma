@@ -117,7 +117,7 @@ def test_convert_worker_fail_max_retries(mock_sleep, converter_setup, mock_deps)
 @patch("koma.core.converter.time.sleep")
 def test_copy_worker_retry_success(mock_sleep, converter_setup):
     """测试复制操作的重试逻辑"""
-    converter, in_dir, out_dir = converter_setup
+    converter, in_dir, _ = converter_setup
 
     src = in_dir / "retry_copy.png"
     src.write_bytes(b"data")

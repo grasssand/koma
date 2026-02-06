@@ -25,7 +25,7 @@ def test_scanner_classification(scanner_setup, ext_config, mock_image_processor)
     results = list(scanner.run())
 
     assert len(results) == 1
-    root, res = results[0]
+    _, res = results[0]
 
     convert_names = [p.name for p in res.to_convert]
     copy_names = [p.name for p in res.to_copy]
@@ -46,9 +46,7 @@ def test_scanner_ad_detection_logic(scanner_setup, ext_config, mock_image_proces
     (scanner_setup / "06.jpg").touch()
 
     def side_effect_qrcode(path):
-        if "05" in path.name or "06" in path.name:
-            return True
-        return False
+        return bool("05" in path.name or "06" in path.name)
 
     mock_image_processor.has_ad_qrcode.side_effect = side_effect_qrcode
     mock_image_processor.analyze.return_value = ImageInfo(False, False)
