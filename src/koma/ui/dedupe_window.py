@@ -294,13 +294,14 @@ class DedupeWindow(tk.Toplevel):
                     ui_items_to_remove.append(child_id)
 
         if not to_delete:
-            messagebox.showinfo("提示", "没有勾选任何文件。")
+            messagebox.showinfo("提示", "没有勾选任何文件。", parent=self)
             return
 
         confirm = messagebox.askyesno(
             "确认删除",
             f"确定要将这 {len(to_delete)} 个文件移入回收站吗？\n此操作可以撤销。",
             icon="warning",
+            parent=self,
         )
         if not confirm:
             return
@@ -328,4 +329,8 @@ class DedupeWindow(tk.Toplevel):
         if fail_count > 0:
             msg += f"\n失败: {fail_count} 个 (详情见日志)"
 
-        messagebox.showinfo("操作完成", msg)
+        messagebox.showinfo("操作完成", msg, parent=self)
+
+        # 弹窗关闭后，强制将本窗口提到最前并获取焦点
+        self.lift()
+        self.focus_force()
