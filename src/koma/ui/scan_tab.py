@@ -6,6 +6,7 @@ from pathlib import Path
 from tkinter import messagebox, ttk
 
 from natsort import natsort_keygen
+from PIL import Image, ImageTk
 from send2trash import send2trash
 
 from koma.config import ARCHIVE_OUTPUT_FORMATS
@@ -39,6 +40,21 @@ class SacnTab(BaseTab):
             ("abspath", "完整路径", 0, "w", False),
         ]
         self.header_map = {item[0]: item[1] for item in self.columns_config}
+
+        # 视图相关变量
+        self.scanned_items = []  # 存储扫描结果字典列表
+        self.view_mode = "list"  # "list" | "grid"
+        self.image_cache = []  # 图片缓存防止GC
+
+        # 分页与布局参数
+        self.loaded_count = 0  # 当前已渲染数量
+        self.BATCH_SIZE = 50  # 每次加载数量
+        self.grid_row = 0
+        self.grid_col = 0
+        self.COLUMNS_PER_ROW = 5  # 初始默认值
+        self.CARD_WIDTH = 120  # 卡片宽度
+        self.CARD_PADDING = 6  # 左右间距总和
+        self.SLOT_WIDTH = self.CARD_WIDTH + self.CARD_PADDING
 
         self._setup_ui()
 
@@ -122,7 +138,6 @@ class SacnTab(BaseTab):
         )
         self.cbo_fmt.pack(side="left", padx=5)
 
-        # 初始状态隐藏
         self._toggle_archive_options()
 
         self.btn_scan = ttk.Button(path_grp, text="🔍 开始扫描", command=self._start)
@@ -130,19 +145,49 @@ class SacnTab(BaseTab):
             row=3, column=0, columnspan=3, sticky="ew", pady=(10, 0), ipady=5
         )
 
-        # === 列表区 ===
-        list_frame = ttk.LabelFrame(self, text="待处理文件 (杂项/广告)", padding=10)
-        list_frame.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        # === 底部按钮 ===
+        action_frame = ttk.Frame(self, padding=10)
+        action_frame.pack(fill="x", side="bottom")
+        ttk.Button(action_frame, text="全选", command=self._select_all).pack(
+            side="left"
+        )
+        ttk.Button(action_frame, text="取消选择", command=self._deselect_all).pack(
+            side="left", padx=5
+        )
+        self.btn_delete = ttk.Button(
+            action_frame, text="删除选中到回收站", command=self._delete_selected
+        )
+        self.btn_delete.pack(side="right", padx=5)
 
-        font_name = get_sans_font(self.config.app.font)
-        font_size = self.config.app.font_size
+        # === 内容显示区 ===
+        self.main_content = ttk.LabelFrame(
+            self, text="扫描结果（双击打开文件位置）", padding=10
+        )
+        self.main_content.pack(fill="both", expand=True, padx=10, pady=(0, 5))
+
+        # 切换视图按钮
+        self.btn_toggle = ttk.Button(
+            self.main_content,
+            text="🪟 切换网格视图",
+            command=self._toggle_view,
+            state="disabled",
+        )
+        self.btn_toggle.pack(side="top", anchor="e", pady=(0, 5))
+
+        # 列表模式容器
+        self.tree_frame = ttk.Frame(self.main_content)
+        self.tree_frame.pack(fill="both", expand=True)
+
         style = ttk.Style()
-        style.configure("Treeview", font=(font_name, font_size))
+        style.configure(
+            "Treeview",
+            font=(get_sans_font(self.config.app.font), self.config.app.font_size),
+        )
 
         all_columns = [item[0] for item in self.columns_config]
         visible_columns = [item[0] for item in self.columns_config if item[4]]
         self.tree = ttk.Treeview(
-            list_frame,
+            self.tree_frame,
             columns=all_columns,
             displaycolumns=visible_columns,
             show="headings",
@@ -157,29 +202,242 @@ class SacnTab(BaseTab):
             self.tree.column(col_id, width=width, anchor=anchor)
 
         scrollbar = ttk.Scrollbar(
-            list_frame, orient="vertical", command=self.tree.yview
+            self.tree_frame, orient="vertical", command=self.tree.yview
         )
         self.tree.configure(yscrollcommand=scrollbar.set)
         self.tree.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
-
         self.tree.bind("<Double-1>", self._on_dblclick)
 
-        # 底部按钮
-        action_frame = ttk.Frame(self, padding=10)
-        action_frame.pack(fill="x", side="bottom")
-        ttk.Button(action_frame, text="全选", command=self._select_all).pack(
-            side="left"
+        # 网格模式容器
+        self.grid_container = ttk.Frame(self.main_content)
+
+        self.canvas = tk.Canvas(self.grid_container, bg="white")
+        # 绑定大小变化事件
+        self.canvas.bind("<Configure>", self._on_canvas_resize)
+
+        self.grid_scrollbar = ttk.Scrollbar(
+            self.grid_container, orient="vertical", command=self.canvas.yview
         )
-        self.btn_delete = ttk.Button(
-            action_frame, text="删除选中到回收站", command=self._delete_selected
+        self.scrollable_frame = ttk.Frame(self.canvas)
+
+        self.scrollable_frame.bind(
+            "<Configure>",
+            lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")),
         )
-        self.btn_delete.pack(side="right", padx=5)
+
+        # 初始窗口
+        self.canvas_window_id = self.canvas.create_window(
+            (0, 0), window=self.scrollable_frame, anchor="nw"
+        )
+        self.canvas.configure(yscrollcommand=self.grid_scrollbar.set)
+
+        self.canvas.pack(side="left", fill="both", expand=True)
+        self.grid_scrollbar.pack(side="right", fill="y")
+
+        self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
+
+    def _on_canvas_resize(self, event):
+        """窗口大小改变时计算列数"""
+        if self.view_mode != "grid":
+            return
+
+        canvas_width = event.width
+
+        slot_w = getattr(self, "SLOT_WIDTH", 130)
+
+        new_cols = max(1, canvas_width // slot_w)
+
+        self.canvas.coords(self.canvas_window_id, 10, 0)
+
+        # 如果列数变化，触发重排
+        if new_cols != self.COLUMNS_PER_ROW:
+            self.COLUMNS_PER_ROW = new_cols
+            self._reflow_grid()
+
+    def _reflow_grid(self):
+        """重新排列网格卡片"""
+        for i in range(self.COLUMNS_PER_ROW):
+            self.scrollable_frame.columnconfigure(i, weight=1, uniform="u_group")
+
+        widgets = self.scrollable_frame.winfo_children()
+        r, c = 0, 0
+        for widget in widgets:
+            if isinstance(widget, ttk.Button) and "加载更多" in str(
+                widget.cget("text")
+            ):
+                if c > 0:
+                    r += 1
+                    c = 0
+                widget.grid(row=r, column=0, columnspan=self.COLUMNS_PER_ROW, pady=20)
+                r += 1
+            else:
+                widget.grid(row=r, column=c, padx=3, pady=3, sticky="nsew")
+                c += 1
+                if c >= self.COLUMNS_PER_ROW:
+                    c = 0
+                    r += 1
+        self.grid_row = r
+        self.grid_col = c
+
+    def _on_mousewheel(self, event):
+        if self.view_mode == "grid" and self.canvas.winfo_exists():
+            self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+    def _toggle_view(self):
+        """切换视图模式"""
+        if self.view_mode == "list":
+            self.view_mode = "grid"
+            self.tree_frame.pack_forget()
+            self.grid_container.pack(fill="both", expand=True)
+            self.btn_toggle.config(text="📋 切换列表视图")
+
+            if self.loaded_count == 0 and self.scanned_items:
+                self._render_next_batch()
+        else:
+            self.view_mode = "list"
+            self.grid_container.pack_forget()
+            self.tree_frame.pack(fill="both", expand=True)
+            self.btn_toggle.config(text="🪟 切换网格视图")
+
+    def _render_next_batch(self):
+        """渲染下一批网格图片"""
+        if hasattr(self, "btn_load_more") and self.btn_load_more:
+            self.btn_load_more.destroy()
+            self.btn_load_more = None
+
+        total_items = len(self.scanned_items)
+        if self.loaded_count >= total_items:
+            return
+
+        end_idx = min(self.loaded_count + self.BATCH_SIZE, total_items)
+        batch = self.scanned_items[self.loaded_count : end_idx]
+
+        for item in batch:
+            self._create_grid_card(item)
+
+        self.loaded_count = end_idx
+
+        if self.loaded_count < total_items:
+            self.btn_load_more = ttk.Button(
+                self.scrollable_frame,
+                text=f"加载更多 ({total_items - self.loaded_count} 个剩余)",
+                command=self._render_next_batch,
+            )
+            if self.grid_col > 0:
+                self.grid_row += 1
+                self.grid_col = 0
+
+            self.btn_load_more.grid(
+                row=self.grid_row, column=0, columnspan=self.COLUMNS_PER_ROW, pady=20
+            )
+            self.grid_row += 1
+
+    def _create_grid_card(self, item):
+        """创建单个网格卡片"""
+        path = item["path"]
+        category = item["category"]
+        is_image = path.suffix.lower() in self.config.extensions.all_supported_img
+
+        # 选中样式
+        bg_color = "#e1f5fe" if item["selected"] else "white"
+        border_color = "blue" if item["selected"] else "#d9d9d9"
+        border_width = 2 if item["selected"] else 1
+
+        card = tk.Frame(
+            self.scrollable_frame,
+            borderwidth=border_width,
+            relief="solid",
+            bg=bg_color,
+            highlightbackground=border_color,
+            highlightthickness=1,
+        )
+        card.grid(
+            row=self.grid_row, column=self.grid_col, padx=3, pady=3, sticky="nsew"
+        )
+        self.scrollable_frame.columnconfigure(
+            self.grid_col, weight=1, uniform="u_group"
+        )
+
+        item["widget"] = card
+
+        def on_click(event):
+            self._toggle_selection(item, card)
+
+        if is_image and Image:
+            try:
+                pil_img = Image.open(path)
+                pil_img.thumbnail((128, 128))
+                tk_img = ImageTk.PhotoImage(pil_img)
+                self.image_cache.append(tk_img)
+                lbl = tk.Label(card, image=tk_img, bg=bg_color)
+                lbl.pack(pady=2)
+                lbl.bind("<Button-1>", on_click)
+                lbl.bind("<Double-1>", lambda e, p=path: self._on_dblclick(None, p))
+            except Exception:
+                lbl = tk.Label(card, text="❌", bg=bg_color)
+                lbl.pack(pady=20)
+                lbl.bind("<Button-1>", on_click)
+        else:
+            txt = "🖼️" if is_image else "📄"
+            lbl = tk.Label(
+                card,
+                text=txt,
+                font=(get_sans_font(self.config.app.font), 20),
+                bg=bg_color,
+            )
+            lbl.pack(pady=20)
+            lbl.bind("<Button-1>", on_click)
+
+        # 类别
+        fg = "red" if category == "广告" else "blue"
+        lbl_cat = tk.Label(card, text=category, fg=fg, bg=bg_color, font=("bold"))
+        lbl_cat.pack()
+        lbl_cat.bind("<Button-1>", on_click)
+
+        # 文件名
+        lbl_name = tk.Label(
+            card,
+            text=item["name"],
+            wraplength=110,
+            font=(get_sans_font(self.config.app.font), self.config.app.font_size),
+            bg=bg_color,
+        )
+        lbl_name.pack(padx=2, pady=(0, 2))
+        lbl_name.bind("<Button-1>", on_click)
+
+        card.bind("<Button-1>", on_click)
+
+        # 维护索引
+        self.grid_col += 1
+        if self.grid_col >= self.COLUMNS_PER_ROW:
+            self.grid_col = 0
+            self.grid_row += 1
+
+    def _toggle_selection(self, item, card_widget):
+        """切换选中状态并更新视觉"""
+        item["selected"] = not item["selected"]
+        is_sel = item["selected"]
+
+        bg_color = "#e1f5fe" if is_sel else "white"
+        border_color = "blue" if is_sel else "#d9d9d9"
+        border_width = 2 if is_sel else 1
+
+        try:
+            card_widget.config(
+                bg=bg_color, highlightbackground=border_color, borderwidth=border_width
+            )
+            for child in card_widget.winfo_children():
+                try:
+                    child.config(bg=bg_color)
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     def _toggle_archive_options(self):
         if self.archive_scan_var.get():
             self.archive_opts_frame.grid()
-
             input_path = self.path_var.get()
             if input_path and not self.archive_out_path_var.get():
                 try:
@@ -212,8 +470,22 @@ class SacnTab(BaseTab):
         if options["enable_archive_scan"] and not options["archive_out_path"]:
             return messagebox.showerror("提示", "启用压缩包处理时，必须设置输出路径")
 
+        # 清空数据
         for item in self.tree.get_children():
             self.tree.delete(item)
+
+        self.scanned_items.clear()
+        self.image_cache.clear()
+        for widget in self.scrollable_frame.winfo_children():
+            widget.destroy()
+        self.loaded_count = 0
+        self.grid_row = 0
+        self.grid_col = 0
+
+        # 重置回列表视图
+        if self.view_mode == "grid":
+            self._toggle_view()
+        self.btn_toggle.config(state="disabled")
 
         self.btn_scan.config(state="disabled")
         threading.Thread(
@@ -256,7 +528,17 @@ class SacnTab(BaseTab):
             logger.error(f"扫描出错: {e}")
             self.update_status("扫描出错")
         finally:
-            self.after(0, lambda: self.btn_scan.config(state="normal"))
+
+            def on_scan_finished():
+                self.btn_scan.config(state="normal")
+
+                # 只有扫描到了结果，才允许切换视图
+                if self.scanned_items:
+                    self.btn_toggle.config(state="normal")
+                else:
+                    self.btn_toggle.config(state="disabled")
+
+            self.after(0, on_scan_finished)
 
     def _add_item(self, type_str, path):
         self.tree.insert(
@@ -265,36 +547,135 @@ class SacnTab(BaseTab):
             values=(type_str, path.name, path.suffix, str(path.parent), str(path)),
         )
 
-    def _on_dblclick(self, event):
-        item = self.tree.selection()
-        if not item:
+        self.scanned_items.append(
+            {
+                "category": type_str,
+                "path": path,
+                "name": path.name,
+                "selected": False,
+                "widget": None,
+            }
+        )
+
+        # if str(self.btn_toggle["state"]) == "disabled":
+        #     self.btn_toggle.config(state="normal")
+
+    def _on_dblclick(self, event, path=None):
+        if path is None and event:
+            item = self.tree.selection()
+            if not item:
+                return
+            path = self.tree.item(item[0], "values")[4]
+
+        if not path:
             return
-        path = self.tree.item(item[0], "values")[4]
+
         try:
             if os.name == "nt":
-                subprocess.run(["explorer", "/select,", path])
+                subprocess.run(["explorer", "/select,", str(path)])
             else:
                 subprocess.run(["xdg-open", str(Path(path).parent)])
         except Exception:
             pass
 
     def _select_all(self):
-        self.tree.selection_add(self.tree.get_children())
+        """全选功能"""
+        if self.view_mode == "list":
+            self.tree.selection_add(self.tree.get_children())
+        else:
+            for item in self.scanned_items:
+                if not item["selected"]:
+                    if item["widget"]:
+                        self._toggle_selection(item, item["widget"])
+                    else:
+                        item["selected"] = True
+
+    def _deselect_all(self):
+        """取消所有选择"""
+        if self.view_mode == "list":
+            selection = self.tree.selection()
+            if selection:
+                self.tree.selection_remove(selection)
+        else:
+            for item in self.scanned_items:
+                if item["selected"]:
+                    if item["widget"]:
+                        self._toggle_selection(item, item["widget"])
+                    else:
+                        item["selected"] = False
 
     def _delete_selected(self):
-        items = self.tree.selection()
-        if not items:
-            return
-        if not messagebox.askyesno("确认", f"删除选中的 {len(items)} 个文件？"):
-            return
+        """删除选中项"""
+        paths_to_remove = set()
 
-        for item in items:
-            path = self.tree.item(item, "values")[4]
+        if self.view_mode == "list":
+            items = self.tree.selection()
+            if not items:
+                return
+            if not messagebox.askyesno("确认", f"删除选中的 {len(items)} 个文件？"):
+                return
+
+            for item_id in items:
+                path_str = self.tree.item(item_id, "values")[4]
+                paths_to_remove.add(path_str)
+        else:
+            selected = [x for x in self.scanned_items if x["selected"]]
+            if not selected:
+                return
+            if not messagebox.askyesno("确认", f"删除选中的 {len(selected)} 个文件？"):
+                return
+
+            for item in selected:
+                paths_to_remove.add(str(item["path"]))
+
+        deleted_paths = set()
+        for path_str in paths_to_remove:
             try:
-                send2trash(path)
-                self.tree.delete(item)
+                send2trash(path_str)
+                deleted_paths.add(path_str)
             except Exception as e:
                 logger.error(f"删除失败: {e}")
+
+        if not deleted_paths:
+            return
+
+        tree_items_to_delete = []
+        for item_id in self.tree.get_children():
+            p_str = self.tree.item(item_id, "values")[4]
+            if p_str in deleted_paths:
+                tree_items_to_delete.append(item_id)
+
+        for item_id in tree_items_to_delete:
+            self.tree.delete(item_id)
+
+        new_scanned_items = []
+        deleted_widget_count = 0
+
+        for item in self.scanned_items:
+            if str(item["path"]) in deleted_paths:
+                if item.get("widget"):
+                    try:
+                        if item["widget"].winfo_exists():
+                            item["widget"].destroy()
+                            deleted_widget_count += 1
+                    except Exception:
+                        pass
+            else:
+                new_scanned_items.append(item)
+
+        self.scanned_items = new_scanned_items
+        self.loaded_count = max(0, self.loaded_count - deleted_widget_count)
+
+        self._reflow_grid()
+
+    def _refresh_grid_view(self):
+        """删除后强制刷新网格"""
+        for widget in self.scrollable_frame.winfo_children():
+            widget.destroy()
+        self.grid_row = 0
+        self.grid_col = 0
+        self.loaded_count = 0
+        self._render_next_batch()
 
     def _sort_tree(self, col, reverse):
         """对结果列表进行自然排序"""
@@ -312,7 +693,6 @@ class SacnTab(BaseTab):
 
         arrow = "▼" if reverse else "▲"
         new_text = f"{self.header_map[col]} {arrow}"
-
         self.tree.heading(
             col, text=new_text, command=lambda: self._sort_tree(col, not reverse)
         )
