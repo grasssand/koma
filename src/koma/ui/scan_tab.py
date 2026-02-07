@@ -12,7 +12,6 @@ from send2trash import send2trash
 from koma.config import ARCHIVE_OUTPUT_FORMATS
 from koma.core.scanner import Scanner
 from koma.ui.base_tab import BaseTab
-from koma.ui.utils import get_sans_font
 from koma.utils import logger
 
 
@@ -181,7 +180,8 @@ class SacnTab(BaseTab):
         style = ttk.Style()
         style.configure(
             "Treeview",
-            font=(get_sans_font(self.config.app.font), self.config.app.font_size),
+            font=(self.config.app.font, self.config.app.list_font_size),
+            rowheight=int(self.config.app.list_font_size * 2.2),
         )
 
         all_columns = [item[0] for item in self.columns_config]
@@ -378,29 +378,38 @@ class SacnTab(BaseTab):
                 lbl = tk.Label(card, text="❌", bg=bg_color)
                 lbl.pack(pady=20)
                 lbl.bind("<Button-1>", on_click)
+                lbl.bind("<Double-1>", lambda e, p=path: self._on_dblclick(None, p))
         else:
             txt = "🖼️" if is_image else "📄"
             lbl = tk.Label(
                 card,
                 text=txt,
-                font=(get_sans_font(self.config.app.font), 20),
+                font=(self.config.app.font, 36),
                 bg=bg_color,
             )
             lbl.pack(pady=20)
             lbl.bind("<Button-1>", on_click)
+            lbl.bind("<Double-1>", lambda e, p=path: self._on_dblclick(None, p))
 
         # 类别
         fg = "red" if category == "广告" else "blue"
-        lbl_cat = tk.Label(card, text=category, fg=fg, bg=bg_color, font=("bold"))
+        lbl_cat = tk.Label(
+            card,
+            text=category,
+            fg=fg,
+            bg=bg_color,
+            font=(self.config.app.font, 14, "bold"),
+        )
         lbl_cat.pack()
         lbl_cat.bind("<Button-1>", on_click)
+        lbl_cat.bind("<Double-1>", lambda e, p=path: self._on_dblclick(None, p))
 
         # 文件名
         lbl_name = tk.Label(
             card,
             text=item["name"],
             wraplength=110,
-            font=(get_sans_font(self.config.app.font), self.config.app.font_size),
+            font=(self.config.app.font, self.config.app.list_font_size),
             bg=bg_color,
         )
         lbl_name.pack(padx=2, pady=(0, 2))

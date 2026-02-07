@@ -3,10 +3,17 @@
 # ==========================================
 
 [app]
-# 文件列表字体
+# 窗口大小
+height = "800"
+width = "900"
+# 界面字体
 font = "Noto Sans SC"
+# 日志字体
+monospace_font = "Maple Mono NF CN"
+# 界面字体大小（整数）
+font_size = 9
 # 文件列表字体大小（整数）
-font_size = 10
+list_font_size = 10
 
 [converter]
 # 线程并发数

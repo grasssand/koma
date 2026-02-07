@@ -35,10 +35,17 @@ TOML_TEMPLATE = """# ==========================================
 # ==========================================
 
 [app]
-# 文件列表字体
+# 窗口大小
+height = {app.height}
+width = {app.width}
+# 界面字体
 font = "{app.font}"
-# 文件列表字体大小（整数）
+# 日志字体
+monospace_font = "{app.monospace_font}"
+# 界面字体大小（整数）
 font_size = {app.font_size}
+# 文件列表字体大小（整数）
+list_font_size = {app.list_font_size}
 
 [converter]
 # 线程并发数
@@ -82,12 +89,22 @@ qr_whitelist = {scanner_qr}
 
 @dataclass
 class AppConfig:
+    height: int = 800
+    width: int = 900
     font: str = "Noto Sans SC"
-    font_size: int = 10
+    monospace_font: str = "Maple Mono NF CN"
+    font_size: int = 9
+    list_font_size: int = 10
 
     def __post_init__(self):
+        if not isinstance(self.height, int) or self.height <= 0:
+            self.height = 800
+        if not isinstance(self.width, int) or self.width <= 0:
+            self.width = 900
         if not isinstance(self.font_size, int) or self.font_size <= 0:
-            self.font_size = 10
+            self.font_size = 9
+        if not isinstance(self.list_font_size, int) or self.list_font_size <= 0:
+            self.list_font_size = 10
 
 
 @dataclass

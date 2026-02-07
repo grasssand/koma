@@ -1,4 +1,5 @@
 import tkinter as tk
+import tkinter.font as tkfont
 from tkinter import messagebox, ttk
 
 from koma.config import IMG_OUTPUT_FORMATS, ConfigManager, GlobalConfig
@@ -10,7 +11,7 @@ class SettingsDialog(tk.Toplevel):
     def __init__(self, parent, config: GlobalConfig, manager: ConfigManager):
         super().__init__(parent)
         self.title("全局设置")
-        self.geometry("600x800")
+        self.geometry("600x720")
 
         self.transient(parent)
         self.grab_set()
@@ -19,8 +20,13 @@ class SettingsDialog(tk.Toplevel):
         self.manager = manager
 
         ## UI 变量
+        self.win_height_var = tk.IntVar()
+        self.win_width_var = tk.IntVar()
         self.font_var = tk.StringVar()
+        self.mono_font_var = tk.StringVar()
         self.font_size_var = tk.IntVar()
+        self.list_font_size_var = tk.IntVar()
+
         self.worker_var = tk.IntVar()
         self.format_var = tk.StringVar()
         self.quality_var = tk.IntVar()
@@ -80,22 +86,56 @@ class SettingsDialog(tk.Toplevel):
 
     def _init_app_tab(self):
         """常规设置"""
-        grp = ttk.LabelFrame(self.tab_app, text="文件列表界面", padding=10)
-        grp.pack(fill="x")
+        families = sorted(tkfont.families())
 
-        f1 = ttk.Frame(grp)
-        f1.pack(fill="x", pady=5)
-        ttk.Label(f1, text="字体名称:").pack(side="left")
-        ttk.Entry(f1, textvariable=self.font_var).pack(
-            side="left", padx=5, fill="x", expand=True
+        grp_win = ttk.LabelFrame(self.tab_app, text="启动设置", padding=10)
+        grp_win.pack(fill="x", pady=(0, 10))
+
+        f_win = ttk.Frame(grp_win)
+        f_win.pack(fill="x", pady=5)
+
+        ttk.Label(f_win, text="窗口大小（宽 x 高）:").pack(side="left")
+        ttk.Entry(f_win, textvariable=self.win_width_var, width=6).pack(
+            side="left", padx=(10, 5)
         )
-
-        f2 = ttk.Frame(grp)
-        f2.pack(fill="x", pady=5)
-        ttk.Label(f2, text="字体大小:").pack(side="left")
-        ttk.Spinbox(f2, from_=8, to=24, textvariable=self.font_size_var, width=5).pack(
+        ttk.Label(f_win, text="x").pack(side="left")
+        ttk.Entry(f_win, textvariable=self.win_height_var, width=6).pack(
             side="left", padx=5
         )
+
+        grp_font = ttk.LabelFrame(self.tab_app, text="字体与外观", padding=10)
+        grp_font.pack(fill="x")
+
+        f1 = ttk.Frame(grp_font)
+        f1.pack(fill="x", pady=5)
+        ttk.Label(f1, text="界面字体:", width=10).pack(side="left")
+        ttk.Combobox(
+            f1, textvariable=self.font_var, values=families, state="readonly", height=20
+        ).pack(side="left", padx=5, fill="x", expand=True)
+
+        f2 = ttk.Frame(grp_font)
+        f2.pack(fill="x", pady=5)
+        ttk.Label(f2, text="日志字体:", width=10).pack(side="left")
+        ttk.Combobox(
+            f2,
+            textvariable=self.mono_font_var,
+            values=families,
+            state="readonly",
+            height=20,
+        ).pack(side="left", padx=5, fill="x", expand=True)
+
+        f3 = ttk.Frame(grp_font)
+        f3.pack(fill="x", pady=5)
+
+        ttk.Label(f3, text="界面字号:").pack(side="left")
+        ttk.Spinbox(f3, from_=8, to=24, textvariable=self.font_size_var, width=5).pack(
+            side="left", padx=(5, 15)
+        )
+
+        ttk.Label(f3, text="列表字号:").pack(side="left")
+        ttk.Spinbox(
+            f3, from_=8, to=30, textvariable=self.list_font_size_var, width=5
+        ).pack(side="left", padx=5)
 
     def _init_scan_tab(self):
         """扫描清理设置"""
@@ -241,9 +281,13 @@ class SettingsDialog(tk.Toplevel):
 
     def _load_values(self):
         """将 self.config 的值填入 UI"""
-        # App
+        # App Settings (Updated)
+        self.win_height_var.set(getattr(self.config.app, "height", 800))
+        self.win_width_var.set(getattr(self.config.app, "width", 900))
         self.font_var.set(self.config.app.font)
+        self.mono_font_var.set(getattr(self.config.app, "monospace_font", "Consolas"))
         self.font_size_var.set(self.config.app.font_size)
+        self.list_font_size_var.set(getattr(self.config.app, "list_font_size", 10))
 
         # Converter
         self.worker_var.set(self.config.converter.max_workers)
@@ -330,8 +374,22 @@ class SettingsDialog(tk.Toplevel):
         """保存配置到磁盘"""
         try:
             # App
+            try:
+                w = int(self.win_width_var.get())
+                h = int(self.win_height_var.get())
+                if w < 100 or h < 100:
+                    raise ValueError("窗口尺寸过小")
+
+                self.config.app.width = w
+                self.config.app.height = h
+            except (ValueError, tk.TclError):
+                messagebox.showwarning("输入错误", "窗口宽度和高度必须是有效的整数！")
+                return
+
             self.config.app.font = self.font_var.get()
+            self.config.app.monospace_font = self.mono_font_var.get()
             self.config.app.font_size = self.font_size_var.get()
+            self.config.app.list_font_size = self.list_font_size_var.get()
 
             # Converter
             self.config.converter.max_workers = self.worker_var.get()

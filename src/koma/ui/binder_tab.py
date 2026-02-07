@@ -8,7 +8,6 @@ from tkinterdnd2 import DND_FILES
 from koma.core.archive import ArchiveHandler
 from koma.core.binder import Binder
 from koma.ui.base_tab import BaseTab
-from koma.ui.utils import get_sans_font
 from koma.utils import logger
 
 
@@ -126,13 +125,12 @@ class BinderTab(BaseTab):
         inner_frame = tk.Frame(border_frame, bg="#191724")
         inner_frame.pack(fill="both", expand=True)
 
-        # 标签：白字，微软雅黑/Arial
         lbl = tk.Label(
             inner_frame,
             text=display_text,
             bg="#1f1d2e",
             fg="#e0def4",
-            font=(get_sans_font(), 10),
+            font=(self.config.app.font, 10),
             pady=5,
             padx=10,
         )

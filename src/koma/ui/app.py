@@ -1,6 +1,7 @@
 import logging
 import sys
 import tkinter as tk
+import tkinter.font as tkfont
 from pathlib import Path
 from tkinter import scrolledtext, ttk
 
@@ -15,18 +16,22 @@ from koma.ui.dedupe_tab import DedupeTab
 from koma.ui.rename_tab import RenameTab
 from koma.ui.scan_tab import SacnTab
 from koma.ui.settings import SettingsDialog
-from koma.ui.utils import TextHandler, get_monospace_font
+from koma.ui.utils import TextHandler, get_monospace_font, get_sans_font
 from koma.utils import get_default_formatter, logger
 
 
 class KomaGUI:
     def __init__(self, root):
+        self.cfg_manager = ConfigManager()
+        config = self.cfg_manager.load()
+
         self.root = root
         self.root.title(f"KOMA - 漫画工具箱 v{koma.__version__}")
-        self.root.geometry("900x800")
+        self.root.geometry(f"{config.app.width}x{config.app.height}")
 
-        self.cfg_manager = ConfigManager()
-        self.config = self.cfg_manager.load()
+        config.app.font = get_sans_font(config.app.font)
+        config.app.monospace_font = get_monospace_font(config.app.monospace_font)
+        self.config = config
         self.image_processor = ImageProcessor(self.config.scanner)
 
         self.progress_var = tk.DoubleVar(value=0)
@@ -34,6 +39,7 @@ class KomaGUI:
 
         self._setup_icon()
         self._setup_ui()
+        self._setup_global_font()
         self._setup_logging_redirect()
 
     def _setup_icon(self):
@@ -100,9 +106,34 @@ class KomaGUI:
         paned.add(log_frame, weight=1)
 
         self.log_text = scrolledtext.ScrolledText(
-            log_frame, height=8, state="disabled", font=(get_monospace_font(), 9)
+            log_frame,
+            height=8,
+            state="disabled",
+            font=(self.config.app.monospace_font, self.config.app.font_size),
         )
         self.log_text.pack(fill="both", expand=True)
+
+    def _setup_global_font(self):
+        default_font = tkfont.nametofont("TkDefaultFont")
+        default_font.configure(
+            family=self.config.app.font, size=self.config.app.font_size
+        )
+
+        tkfont.nametofont("TkTextFont").configure(
+            family=self.config.app.font, size=self.config.app.font_size
+        )
+        tkfont.nametofont("TkMenuFont").configure(
+            family=self.config.app.font, size=self.config.app.font_size
+        )
+        tkfont.nametofont("TkHeadingFont").configure(
+            family=self.config.app.font, size=self.config.app.font_size
+        )
+        tkfont.nametofont("TkFixedFont").configure(
+            family=self.config.app.monospace_font, size=self.config.app.font_size
+        )
+
+        style = ttk.Style()
+        style.configure(".", font=(self.config.app.font, self.config.app.font_size))
 
     def _setup_logging_redirect(self):
         """将标准 logging 输出重定向到 UI 文本框"""

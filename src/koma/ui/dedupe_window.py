@@ -10,7 +10,6 @@ from send2trash import send2trash
 
 from koma.config import GlobalConfig
 from koma.core import Deduplicator
-from koma.ui.utils import get_sans_font
 from koma.utils import logger
 
 
@@ -87,15 +86,7 @@ class DedupeWindow(tk.Toplevel):
         self.tree.tag_configure(
             "summary",
             background="#e8f4ff",
-            font=(
-                get_sans_font(self.config.app.font),
-                self.config.app.font_size,
-                "bold",
-            ),
-        )
-        self.tree.tag_configure(
-            "file",
-            font=(get_sans_font(self.config.app.font), self.config.app.font_size),
+            font=(self.config.app.font, self.config.app.list_font_size, "bold"),
         )
 
     def _toggle_ui(self, enable: bool):
@@ -196,7 +187,6 @@ class DedupeWindow(tk.Toplevel):
                         size_mb,
                         str(path),
                     ),
-                    tags=("file",),
                 )
 
     def get_folder_size(self, path: Path) -> int:

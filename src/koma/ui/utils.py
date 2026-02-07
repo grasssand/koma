@@ -26,18 +26,15 @@ class TextHandler(logging.Handler):
 
 def get_sans_font(user_font: str | None = None) -> str:
     """获取系统无衬线字体"""
-    available = set(tkfont.families())
+    available = tkfont.families()
     candidates = [
         user_font,
+        "Noto Sans SC",
         "Noto Sans CJK SC",
         "Source Han Sans CN",
         "Microsoft YaHei UI",
         "Microsoft YaHei",
-        "PingFang SC",
-        "Heiti SC",
-        "Segoe UI",
-        "Helvetica",
-        "Arial",
+        "微软雅黑",
     ]
     for f in candidates:
         if f and f in available:
@@ -45,16 +42,16 @@ def get_sans_font(user_font: str | None = None) -> str:
     return "TkDefaultFont"
 
 
-def get_monospace_font() -> str:
+def get_monospace_font(user_font: str | None = None) -> str:
     """获取等宽字体"""
-    available = set(tkfont.families())
+    available = tkfont.families()
     candidates = [
-        "Maple Mono NF CN",  # 等宽中文字体
+        user_font,
+        "Maple Mono NF CN",  # 中文等宽字体
         "Source Code Pro",
         "DejaVu Sans Mono",
-        "Consolas",
         "Cascadia Code",
-        "Menlo",
+        "Consolas",
         "Courier New",
     ]
     for f in candidates:
