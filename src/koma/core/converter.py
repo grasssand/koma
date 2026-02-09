@@ -110,7 +110,11 @@ class Converter:
         self.image_processor = image_processor
 
         self.cmd_gen = CommandGenerator(
-            self.config.format, self.config.quality, self.config.lossless
+            self.config.format,
+            self.config.quality,
+            self.config.lossless,
+            self.config.custom_params,
+            self.config.custom_ext,
         )
 
         self.startupinfo = None

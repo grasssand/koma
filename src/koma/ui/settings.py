@@ -3,7 +3,6 @@ import tkinter.font as tkfont
 from tkinter import messagebox, ttk
 
 from koma.config import IMG_OUTPUT_FORMATS, ConfigManager, GlobalConfig
-from koma.ui.utils import get_monospace_font
 from koma.utils import logger
 
 
@@ -222,9 +221,7 @@ class SettingsDialog(tk.Toplevel):
             anchor="w", pady=(0, 10)
         )
 
-        self.editors["regex"] = tk.Text(
-            grp_regex, height=4, font=(get_monospace_font(), 9), wrap="char"
-        )
+        self.editors["regex"] = tk.Text(grp_regex, height=4, wrap="char")
         scr = ttk.Scrollbar(grp_regex, command=self.editors["regex"].yview)
         self.editors["regex"].configure(yscrollcommand=scr.set)
 
@@ -238,7 +235,7 @@ class SettingsDialog(tk.Toplevel):
 
         ttk.Label(
             top_frame,
-            text="提示: 扩展名请用英文逗号或换行分隔，例如: .jpg, .png",
+            text="提示: 扩展名请用空格或换行分隔，例如: .jpg .png",
             foreground="gray",
         ).pack(side="left")
         ttk.Button(
@@ -271,7 +268,7 @@ class SettingsDialog(tk.Toplevel):
         grp = ttk.LabelFrame(parent, text=title, padding=5)
         grp.pack(fill="x", pady=5)
 
-        txt = tk.Text(grp, height=lines, font=(get_monospace_font(), 9), wrap="word")
+        txt = tk.Text(grp, height=lines, wrap="word")
         scr = ttk.Scrollbar(grp, command=txt.yview)
         txt.configure(yscrollcommand=scr.set)
 
@@ -318,7 +315,7 @@ class SettingsDialog(tk.Toplevel):
     ):
         """将集合/列表填入文本框"""
         editor.delete("1.0", tk.END)
-        separator = "\n" if line_break else ", "
+        separator = "\n" if line_break else " "
         text = separator.join(data_set)
         editor.insert("1.0", text)
 
@@ -327,9 +324,9 @@ class SettingsDialog(tk.Toplevel):
         content = editor.get("1.0", tk.END).strip()
         if not content:
             return set()
-        # 支持逗号、换行符分隔
-        content = content.replace("\n", ",")
-        items = [x.strip() for x in content.split(",") if x.strip()]
+        # 支持逗号、空格、换行符分隔
+        content = content.replace("\n", " ").replace(",", " ")
+        items = [x.strip() for x in content.split() if x.strip()]
         return set(items)
 
     def _get_list_from_text(self, editor: tk.Text) -> list[str]:

@@ -85,7 +85,7 @@ def test_webp_lossy_static():
 
 def test_jxl_normal():
     """测试 JXL 有损"""
-    gen = CommandGenerator("jxl", 85, False)
+    gen = CommandGenerator("jxl", 90, False)
     cmd = gen.generate(Path("in.png"), Path("out.jxl"), is_anim=False, is_gray=False)
     cmd_str = " ".join(cmd)
 
@@ -99,3 +99,14 @@ def test_jxl_lossless():
     cmd_str = " ".join(cmd)
 
     assert "-distance 0.0" in cmd_str
+
+
+def test_custom_params():
+    """测试高级参数"""
+    gen = CommandGenerator("avif (aom)", 75, False, "", ".png")
+    ext = gen.get_ext()
+    cmd = gen.generate(Path("in.webp"), Path(f"out{ext}"), is_anim=False, is_gray=False)
+    cmd_str = " ".join(cmd)
+
+    assert "libaom" not in cmd_str
+    assert ".png" in cmd_str

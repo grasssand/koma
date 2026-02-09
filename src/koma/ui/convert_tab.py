@@ -20,6 +20,11 @@ class ConvertTab(BaseTab):
         self.quality_var = tk.IntVar(value=self.config.converter.quality)
         self.lossless_var = tk.BooleanVar(value=self.config.converter.lossless)
         self.skip_ad_var = tk.BooleanVar(value=self.config.scanner.enable_ad_scan)
+        self.advanced_var = tk.BooleanVar(value=False)
+        self.custom_params_var = tk.StringVar(
+            value="-c:v libsvtav1 -preset 6 -crf 35 -pix_fmt yuv420p10le -svtav1-params tune=0:lp=2"
+        )
+        self.custom_ext_var = tk.StringVar(value="avif")
 
         self.input_var.trace_add("write", self._on_input_change)
 
@@ -40,7 +45,6 @@ class ConvertTab(BaseTab):
         ttk.Button(
             grp_path,
             text="选择...",
-            width=4,
             command=lambda: self.select_dir(self.input_var),
         ).grid(row=0, column=2)
 
@@ -51,7 +55,6 @@ class ConvertTab(BaseTab):
         ttk.Button(
             grp_path,
             text="选择...",
-            width=4,
             command=lambda: self.select_dir(self.output_var),
         ).grid(row=1, column=2)
 
@@ -65,13 +68,14 @@ class ConvertTab(BaseTab):
         f_row = ttk.Frame(grp_param)
         f_row.pack(fill="x", pady=2)
         ttk.Label(f_row, text="格式:").pack(side="left")
-        ttk.Combobox(
+        self.cbo_fmt = ttk.Combobox(
             f_row,
             textvariable=self.format_var,
             values=IMG_OUTPUT_FORMATS,
             width=10,
             state="readonly",
-        ).pack(side="left", padx=5)
+        )
+        self.cbo_fmt.pack(side="left", padx=5)
 
         q_row = ttk.Frame(grp_param)
         q_row.pack(fill="x", pady=5)
@@ -90,6 +94,32 @@ class ConvertTab(BaseTab):
             command=self._toggle_quality,
         )
         self.chk_lossless.pack(anchor="w", pady=2)
+
+        ttk.Separator(grp_param, orient="horizontal").pack(fill="x", pady=10)
+        self.chk_adv = ttk.Checkbutton(
+            grp_param,
+            text="高级选项",
+            variable=self.advanced_var,
+            command=self._toggle_advanced,
+        )
+        self.chk_adv.pack(anchor="w", pady=(0, 5))
+        self.frame_adv = ttk.Frame(grp_param)
+        ttk.Label(self.frame_adv, text="FFmpeg 参数:").pack(side="left")
+        ttk.Entry(
+            self.frame_adv,
+            textvariable=self.custom_params_var,
+            font=(self.config.app.monospace_font, self.config.app.font_size),
+        ).pack(side="left", fill="x", expand=True, padx=5)
+        f_e = ttk.Frame(self.frame_adv)
+        f_e.pack(fill="x", pady=2)
+        ttk.Label(f_e, text="文件后缀名(jpg png ...):").pack(side="left")
+        ttk.Entry(
+            f_e,
+            textvariable=self.custom_ext_var,
+            font=(self.config.app.monospace_font, self.config.app.font_size),
+            width=10,
+        ).pack(side="left", padx=5)
+        self._toggle_advanced()
 
         self.btn_run = ttk.Button(self, text="🔁 开始转换", command=self._start)
         self.btn_run.pack(fill="x", padx=20, pady=20, ipady=5)
@@ -114,6 +144,21 @@ class ConvertTab(BaseTab):
         self.scale.config(state=state)
         self.lbl_q.config(state=state)
 
+    def _toggle_advanced(self):
+        if self.advanced_var.get():
+            self.frame_adv.pack(fill="x", pady=2)
+
+            # 禁用常规控件
+            self.cbo_fmt.config(state="disabled")
+            self.scale.config(state="disabled")
+            self.lbl_q.config(state="disabled")
+            self.chk_lossless.config(state="disabled")
+        else:
+            self.frame_adv.pack_forget()
+            self.cbo_fmt.config(state="readonly")
+            self.chk_lossless.config(state="normal")
+            self._toggle_quality()
+
     def _start(self):
         inp, out = self.input_var.get(), self.output_var.get()
         if not inp or not out:
@@ -123,6 +168,15 @@ class ConvertTab(BaseTab):
         self.config.converter.format = self.format_var.get()
         self.config.converter.quality = self.quality_var.get()
         self.config.converter.lossless = self.lossless_var.get()
+        if self.advanced_var.get():
+            self.config.converter.custom_params = self.custom_params_var.get().strip()
+            ext = self.custom_ext_var.get().strip()
+            if ext and not ext.startswith("."):
+                ext = "." + ext
+            self.config.converter.custom_ext = ext
+        else:
+            self.config.converter.custom_params = ""
+            self.config.converter.custom_ext = ""
 
         self.btn_run.config(state="disabled")
         threading.Thread(target=self._run_thread, args=(inp, out), daemon=True).start()

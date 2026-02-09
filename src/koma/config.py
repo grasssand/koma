@@ -113,12 +113,18 @@ class ConverterConfig:
     format: str = "avif (svt)"
     quality: int = 75
     lossless: bool = False
+    custom_params: str = ""
+    custom_ext: str = ""
 
     def __post_init__(self):
         if self.format not in IMG_OUTPUT_FORMATS:
             self.format = "avif (svt)"
         if not (1 <= self.quality <= 100):
             self.quality = 75
+        if self.custom_params is None:
+            self.custom_params = ""
+        if self.custom_ext is None:
+            self.custom_ext = ""
 
     @property
     def actual_workers(self) -> int:
