@@ -1,3 +1,9 @@
+## v1.1.0 (2026-02-09)
+
+### Feat
+
+- **convert**: 重构 command_generator，添加自定义参数控制
+
 ## v1.0.1 (2026-02-07)
 
 ### Refactor
