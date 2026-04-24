@@ -46,13 +46,14 @@ def test_binder_run_mixed_inputs(binder_setup):
     mock_handler.extract.return_value = mock_extract_path
 
     progress_cb = MagicMock()
-    binder.run([img1, archive, folder], progress_callback=progress_cb)
+    options = {"prefix": "test_", "start_index": 5}
+    binder.run([img1, archive, folder], options, progress_callback=progress_cb)
 
     dest_files = sorted(out_dir.iterdir())
     assert len(dest_files) == 3
     # 顺序：cover -> extracted -> folder
     assert dest_files[0].name.endswith(".jpg")
-    assert dest_files[0].name.startswith("000")  # cover
+    assert dest_files[0].name.startswith("test_005")  # cover
 
     assert mock_handler.extract.called
     assert progress_cb.call_count >= 3

@@ -15,6 +15,8 @@ class BinderTab(BaseTab):
     def __init__(self, parent, config, processor, status_callback):
         super().__init__(parent, config, processor, status_callback)
         self.out_var = tk.StringVar()
+        self.filename_prefix_var = tk.StringVar(value="")
+        self.filename_start_index_var = tk.IntVar(value=0)
         self._setup_ui()
 
     def _setup_ui(self):
@@ -28,7 +30,9 @@ class BinderTab(BaseTab):
         ).grid(row=0, sticky="w", padx=10, pady=15)
 
         # 列表区
-        list_frame = ttk.LabelFrame(self, text="合集内容（支持拖拽排序）", padding=5)
+        list_frame = ttk.LabelFrame(
+            self, text="合集内容（支持拖拽添加和排序）", padding=5
+        )
         list_frame.grid(row=1, sticky="nsew", padx=10)
         list_frame.columnconfigure(0, weight=1)
         list_frame.rowconfigure(0, weight=1)
@@ -75,7 +79,7 @@ class BinderTab(BaseTab):
         )
 
         # 输出区
-        out_frame = ttk.Frame(self, padding=10)
+        out_frame = ttk.Frame(self, padding=5)
         out_frame.grid(row=2, sticky="ew")
         ttk.Label(out_frame, text="保存位置:").pack(side="left")
         e = ttk.Entry(out_frame, textvariable=self.out_var)
@@ -88,8 +92,23 @@ class BinderTab(BaseTab):
             command=lambda: self.select_dir(self.out_var),
         ).pack(side="left")
 
+        opt_frame = ttk.Frame(self, padding=5)
+        opt_frame.grid(row=3, sticky="ew")
+        ttk.Label(opt_frame, text="重命名前缀:").pack(side="left")
+        ttk.Entry(opt_frame, textvariable=self.filename_prefix_var, width=12).pack(
+            side="left", padx=10
+        )
+        ttk.Label(opt_frame, text="起始编号:").pack(side="left")
+        ttk.Spinbox(
+            opt_frame,
+            from_=0,
+            to=9999,
+            textvariable=self.filename_start_index_var,
+            width=8,
+        ).pack(side="left", padx=10)
+
         self.btn_run = ttk.Button(self, text="📦 开始装订", command=self._start)
-        self.btn_run.grid(row=3, sticky="ew", padx=40, pady=(0, 20), ipady=5)
+        self.btn_run.grid(row=4, sticky="ew", padx=40, pady=(20, 20), ipady=5)
 
     def _on_drag_start(self, event):
         """鼠标按下：生成美化版的幽灵窗口"""
@@ -234,11 +253,16 @@ class BinderTab(BaseTab):
         inputs = [Path(self.tree.item(i)["values"][1]) for i in items]
 
         self.btn_run.config(state="disabled")
+
+        options = {
+            "prefix": self.filename_prefix_var.get(),
+            "start_index": self.filename_start_index_var.get(),
+        }
         threading.Thread(
-            target=self._run_thread, args=(inputs, out), daemon=True
+            target=self._run_thread, args=(inputs, out, options), daemon=True
         ).start()
 
-    def _run_thread(self, inputs, out):
+    def _run_thread(self, inputs, out, options):
         try:
             self.update_status("正在初始化...", 0)
             archive_handler = ArchiveHandler(self.config.extensions)
@@ -248,7 +272,7 @@ class BinderTab(BaseTab):
                 val = (c / t * 100) if t and t > 0 else 0
                 self.after(0, lambda: self.update_status(m, val))
 
-            binder.run(inputs, progress_callback=cb)
+            binder.run(inputs, options, progress_callback=cb)
 
             self.after(0, lambda: self.update_status("装订完成", 100))
             messagebox.showinfo("成功", "装订完成")

@@ -32,13 +32,13 @@ def test_renamer_success(renamer_setup, ext_config, mock_image_processor):
         mock_instance.run.return_value = iter([(work_dir, res)])
 
         renamer = Renamer(work_dir, ext_config, mock_image_processor)
-        renamer.run()
+        renamer.run({"prefix": "test_", "start_index": 5})
 
         # 验证封面置顶 + 自然排序
-        assert (work_dir / "000.webp").exists()  # cover
-        assert (work_dir / "001.jpg").exists()  # 001
-        assert (work_dir / "002.png").exists()  # 2
-        assert (work_dir / "003.avif").exists()  # 10
+        assert (work_dir / "test_005.webp").exists()  # cover
+        assert (work_dir / "test_006.jpg").exists()  # 001
+        assert (work_dir / "test_007.png").exists()  # 2
+        assert (work_dir / "test_008.avif").exists()  # 10
 
 
 def test_renamer_skip_single_cover(tmp_path, ext_config, mock_image_processor):

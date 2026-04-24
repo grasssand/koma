@@ -48,6 +48,8 @@ class Renamer:
 
         options = options or {}
         export_csv = options.get("export_csv", False)
+        prefix = options.get("prefix", "")
+        start_index = options.get("start_index", 0)
         enable_archive_scan = options.get("enable_archive_scan", False)
         pack_format = options.get("pack_format", "zip")
 
@@ -67,14 +69,14 @@ class Renamer:
             all_images = result.to_convert + result.to_copy
             if all_images:
                 folder_csv_rows = self._rename_files_in_dir(
-                    root, all_images, progress_callback, export_csv
+                    root, all_images, export_csv, prefix, start_index, progress_callback
                 )
                 all_csv_rows.extend(folder_csv_rows)
 
             if enable_archive_scan and result.archives:
                 for arc_path in result.archives:
                     archive_csv_rows = self._process_archive(
-                        arc_path, pack_format, progress_callback
+                        arc_path, pack_format, prefix, start_index, progress_callback
                     )
                     all_csv_rows.extend(archive_csv_rows)
 
@@ -87,7 +89,12 @@ class Renamer:
         logger.info("🎉 所有重命名任务完成！")
 
     def _process_archive(
-        self, archive_path: Path, pack_format: str, progress_callback: Callable | None
+        self,
+        archive_path: Path,
+        pack_format: str,
+        prefix: str = "",
+        start_index: int = 0,
+        progress_callback: Callable | None = None,
     ) -> list:
         """处理单个压缩包：解压 -> 重命名 -> 重打包 -> 安全替换"""
         csv_rows = []
@@ -114,11 +121,11 @@ class Renamer:
                             images.append(fp)
 
                 changed_rows = self._rename_files_in_dir(
-                    content_root, images, None, True
+                    content_root, images, True, prefix, start_index, None
                 )
 
                 if not changed_rows:
-                    # logger.info(f"⏩ 压缩包内无需重命名，跳过: {archive_path.name}")
+                    logger.info(f"⏩ 压缩包内无需重命名，跳过: {archive_path}")
                     return []
 
                 for row in changed_rows:
@@ -167,8 +174,10 @@ class Renamer:
         self,
         root_path: Path,
         files: list[Path],
-        progress_callback: Callable[[int, int, str], None] | None,
-        return_csv: bool,
+        return_csv: bool = False,
+        prefix: str = "",
+        start_index: int = 0,
+        progress_callback: Callable[[int, int, str], None] | None = None,
     ) -> list:
         """核心重命名逻辑"""
         if not files:
@@ -201,8 +210,8 @@ class Renamer:
         num_digits = max(3, len(str(total_count)))
         pending_ops = []
 
-        for index, src_path in enumerate(all_images):
-            new_stem = f"{index:0{num_digits}d}"
+        for index, src_path in enumerate(all_images, start=start_index):
+            new_stem = f"{prefix}{index:0{num_digits}d}"
             new_name = f"{new_stem}{src_path.suffix}"
             if src_path.name == new_name:
                 continue
@@ -225,8 +234,8 @@ class Renamer:
                 src_path.rename(temp_path)
                 temp_map.append((temp_path, target_name, src_path.name))
                 current_op += 1
-                if progress_callback:
-                    progress_callback(current_op, total_ops, "预处理重命名...")
+                # if progress_callback:
+                #     progress_callback(current_op, total_ops, "预处理重命名...")
 
             # 最终重命名
             for temp_path, target_name, original_src_name in temp_map:
@@ -241,7 +250,11 @@ class Renamer:
                     )
                 current_op += 1
                 if progress_callback:
-                    progress_callback(current_op, total_ops, f"重命名: {target_name}")
+                    progress_callback(
+                        current_op,
+                        total_ops,
+                        f"重命名: {root_path / original_src_name} -> {target_name}",
+                    )
 
         except Exception as e:
             logger.error(f"文件夹 {root_path} 重命名发生错误: {e}")

@@ -13,6 +13,8 @@ class RenameTab(BaseTab):
     def __init__(self, parent, config, processor, status_callback):
         super().__init__(parent, config, processor, status_callback)
         self.path_var = tk.StringVar()
+        self.filename_prefix_var = tk.StringVar(value="")
+        self.filename_start_index_var = tk.IntVar(value=0)
         self.csv_var = tk.BooleanVar(value=False)
         self.enable_archive_scan_var = tk.BooleanVar(value=False)
         default_fmt = ARCHIVE_OUTPUT_FORMATS[0] if ARCHIVE_OUTPUT_FORMATS else "zip"
@@ -39,27 +41,36 @@ class RenameTab(BaseTab):
         ).pack(side="left", padx=(5, 0))
 
         # === 选项区域 ===
-        opts_frame = ttk.Frame(grp)
-        opts_frame.pack(fill="x", pady=(10, 0))
+        f1 = ttk.Frame(grp)
+        f1.pack(fill="x", pady=10)
 
-        ttk.Checkbutton(
-            opts_frame, text="导出重命名映射表", variable=self.csv_var
-        ).pack(side="left")
+        ttk.Label(f1, text="重命名前缀:").pack(side="left")
+        ttk.Entry(f1, textvariable=self.filename_prefix_var, width=12).pack(
+            side="left", padx=10
+        )
+        ttk.Label(f1, text="起始编号:").pack(side="left")
+        ttk.Spinbox(
+            f1, from_=0, to=9999, textvariable=self.filename_start_index_var, width=8
+        ).pack(side="left", padx=10)
 
-        ttk.Separator(opts_frame, orient="vertical").pack(
-            side="left", fill="y", padx=15
+        f2 = ttk.Frame(grp)
+        f2.pack(fill="x", pady=10)
+        ttk.Checkbutton(f2, text="导出重命名映射表", variable=self.csv_var).pack(
+            side="left"
         )
 
+        ttk.Separator(f2, orient="vertical").pack(side="left", fill="y", padx=15)
+
         ttk.Checkbutton(
-            opts_frame,
+            f2,
             text="包括压缩包（处理完成将删除原文件至回收站）",
             variable=self.enable_archive_scan_var,
             command=self._toggle_fmt,
         ).pack(side="left")
 
-        ttk.Label(opts_frame, text="重打包格式:").pack(side="left", padx=(10, 5))
+        ttk.Label(f2, text="重打包格式:").pack(side="left", padx=(10, 5))
         self.cbo_fmt = ttk.Combobox(
-            opts_frame,
+            f2,
             textvariable=self.pack_fmt_var,
             values=ARCHIVE_OUTPUT_FORMATS,
             state="disabled",
@@ -91,10 +102,11 @@ class RenameTab(BaseTab):
 
         options = {
             "export_csv": self.csv_var.get(),
+            "prefix": self.filename_prefix_var.get(),
+            "start_index": self.filename_start_index_var.get(),
             "enable_archive_scan": self.enable_archive_scan_var.get(),
             "pack_format": self.pack_fmt_var.get(),
         }
-
         threading.Thread(
             target=self._run_thread, args=(path, options), daemon=True
         ).start()

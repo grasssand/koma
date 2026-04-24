@@ -3,6 +3,7 @@ import shutil
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from natsort import natsorted
 
@@ -34,11 +35,16 @@ class Binder:
     def run(
         self,
         ordered_paths: list[Path],
+        options: dict[str, Any] | None = None,
         progress_callback: Callable[[int, int, str], None] | None = None,
     ):
         if not ordered_paths:
             logger.warning("合集列表为空")
             return
+
+        options = options or {}
+        prefix = options.get("prefix", "")
+        start_index = options.get("start_index", 0)
 
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -98,9 +104,9 @@ class Binder:
             # 计算序号位数 (至少3位)
             num_digits = max(3, len(str(total_count)))
 
-            for index, src_path in enumerate(final_sequence):
+            for index, src_path in enumerate(final_sequence, start=start_index):
                 try:
-                    new_stem = f"{index:0{num_digits}d}"
+                    new_stem = f"{prefix}{index:0{num_digits}d}"
                     new_name = f"{new_stem}{src_path.suffix}"
                     dest_path = self.output_dir / new_name
 
