@@ -157,7 +157,7 @@ class Converter:
                         progress_callback(
                             completed,
                             total_tasks,
-                            f"处理中 ({completed}/{total_tasks}): {res.file.name}",
+                            f"处理中 ({completed}/{total_tasks}): {res.file}",
                         )
         finally:
             if progress_callback:

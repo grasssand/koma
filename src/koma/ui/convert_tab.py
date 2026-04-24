@@ -58,9 +58,11 @@ class ConvertTab(BaseTab):
             command=lambda: self.select_dir(self.output_var),
         ).grid(row=1, column=2)
 
-        ttk.Checkbutton(grp_path, text="跳过广告图片", variable=self.skip_ad_var).grid(
-            row=2, column=1, sticky="w"
-        )
+        ttk.Checkbutton(
+            grp_path,
+            text="跳过广告图片（需要更多时间扫描检测广告）",
+            variable=self.skip_ad_var,
+        ).grid(row=2, column=1, sticky="w")
 
         grp_param = ttk.LabelFrame(self, text="转换参数", padding=10)
         grp_param.pack(fill="x", padx=10, pady=5)
@@ -76,12 +78,22 @@ class ConvertTab(BaseTab):
             state="readonly",
         )
         self.cbo_fmt.pack(side="left", padx=5)
+        ttk.Label(
+            f_row,
+            text="(webp 兼容性最好；avif 压缩率更高，svt 转换更快，aom 质量稍好；jxl 优选无损，支持无损转回原格式)",
+            foreground="gray",
+        ).pack(side="left")
 
         q_row = ttk.Frame(grp_param)
         q_row.pack(fill="x", pady=5)
         ttk.Label(q_row, text="质量:").pack(side="left")
         self.scale = ttk.Scale(
-            q_row, from_=1, to=100, variable=self.quality_var, orient="horizontal"
+            q_row,
+            from_=1,
+            to=100,
+            variable=self.quality_var,
+            orient="horizontal",
+            command=lambda e: self.quality_var.set(int(float(e))),
         )
         self.scale.pack(side="left", fill="x", expand=True, padx=5)
         self.lbl_q = ttk.Label(q_row, textvariable=self.quality_var, width=3)
@@ -134,7 +146,7 @@ class ConvertTab(BaseTab):
         try:
             p = Path(val)
             if p.exists():
-                suggested = p.parent / f"{p.name}_output"
+                suggested = p.parent / f"(转换) {p.name}"
                 self.output_var.set(str(suggested))
         except Exception:
             pass

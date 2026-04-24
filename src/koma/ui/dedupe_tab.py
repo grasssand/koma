@@ -16,7 +16,7 @@ class DedupeTab(BaseTab):
         desc = '扫描文件夹和归档文件 (zip, cbz...)，查找重复的作品。\n支持解析 "[社团/作者] 作品名 (系列)" 格式。'
         ttk.Label(self, text=desc, foreground="#666").pack(anchor="w", padx=10, pady=15)
 
-        grp = ttk.LabelFrame(self, text="查重目标列表", padding=10)
+        grp = ttk.LabelFrame(self, text="查重目标列表（支持拖拽添加）", padding=10)
         grp.pack(fill="both", expand=True, padx=10, pady=5)
 
         btn_frame = ttk.Frame(grp)
