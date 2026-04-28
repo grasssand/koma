@@ -84,6 +84,16 @@ class ConvertTab(BaseTab):
             foreground="gray",
         ).pack(side="left")
 
+        l_row = ttk.Frame(grp_param)
+        l_row.pack(fill="x", pady=5)
+        self.chk_lossless = ttk.Checkbutton(
+            l_row,
+            text="无损模式 (Lossless)",
+            variable=self.lossless_var,
+            command=self._toggle_quality,
+        )
+        self.chk_lossless.pack(side="left", pady=2)
+
         q_row = ttk.Frame(grp_param)
         q_row.pack(fill="x", pady=5)
         ttk.Label(q_row, text="质量:").pack(side="left")
@@ -96,18 +106,11 @@ class ConvertTab(BaseTab):
             command=lambda e: self.quality_var.set(int(float(e))),
         )
         self.scale.pack(side="left", fill="x", expand=True, padx=5)
-        self.lbl_q = ttk.Label(q_row, textvariable=self.quality_var, width=3)
+        self.lbl_q = ttk.Label(q_row, textvariable=self.quality_var, width=4)
         self.lbl_q.pack(side="left")
 
-        self.chk_lossless = ttk.Checkbutton(
-            grp_param,
-            text="无损模式 (Lossless)",
-            variable=self.lossless_var,
-            command=self._toggle_quality,
-        )
-        self.chk_lossless.pack(anchor="w", pady=2)
-
         ttk.Separator(grp_param, orient="horizontal").pack(fill="x", pady=10)
+
         self.chk_adv = ttk.Checkbutton(
             grp_param,
             text="高级选项",

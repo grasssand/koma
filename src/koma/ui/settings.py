@@ -1,7 +1,13 @@
+import sys
 import tkinter as tk
 import tkinter.font as tkfont
+import webbrowser
+from pathlib import Path
 from tkinter import messagebox, ttk
 
+from PIL import Image, ImageTk
+
+import koma
 from koma.config import IMG_OUTPUT_FORMATS, ConfigManager, GlobalConfig
 from koma.utils import logger
 
@@ -70,18 +76,21 @@ class SettingsDialog(tk.Toplevel):
         self.tab_conv = ttk.Frame(notebook, padding=10)
         self.tab_dedupe = ttk.Frame(notebook, padding=10)
         self.tab_ext = ttk.Frame(notebook, padding=10)
+        self.tab_about = ttk.Frame(notebook, padding=10)
 
         notebook.add(self.tab_app, text=" 常规 ")
         notebook.add(self.tab_scan, text=" 扫描清理 ")
         notebook.add(self.tab_conv, text=" 格式转换 ")
         notebook.add(self.tab_dedupe, text=" 归档查重 ")
         notebook.add(self.tab_ext, text=" 过滤规则 ")
+        notebook.add(self.tab_about, text=" 关于 ")
 
         self._init_app_tab()
         self._init_scan_tab()
         self._init_conv_tab()
         self._init_dedupe_tab()
         self._init_ext_tab()
+        self._init_about_tab()
 
     def _init_app_tab(self):
         """常规设置"""
@@ -262,6 +271,85 @@ class SettingsDialog(tk.Toplevel):
         self.editors["system_junk"] = self._create_text_group(
             self.tab_ext, "系统垃圾文件", lines=4
         )
+
+    def _init_about_tab(self):
+        """关于页面"""
+        container = ttk.Frame(self.tab_about)
+        container.pack(expand=True, fill="both", padx=20, pady=20)
+
+        if getattr(sys, "frozen", False):
+            base_path = Path(sys._MEIPASS) / "koma"  # type: ignore
+        else:
+            base_path = Path(__file__).parent.parent
+        icon_path = base_path / "resources" / "koma.ico"
+
+        self.about_icon = None
+        try:
+            if icon_path.exists():
+                pil_img = Image.open(icon_path)
+                pil_img = pil_img.resize((72, 72), Image.Resampling.LANCZOS)
+                self.about_icon = ImageTk.PhotoImage(pil_img)
+        except Exception:
+            pass
+
+        if self.about_icon:
+            lbl_icon = ttk.Label(container, image=self.about_icon)
+            lbl_icon.pack(pady=(20, 10))
+        else:
+            ttk.Frame(container, height=20).pack()
+
+        lbl_title = ttk.Label(
+            container, text="Koma - 漫画工具箱", font=(self.config.app.font, 18, "bold")
+        )
+        lbl_title.pack(pady=(30, 5))
+
+        lbl_version = ttk.Label(
+            container, text=f"版本: v{koma.__version__}", foreground="gray"
+        )
+        lbl_version.pack(pady=(0, 20))
+
+        desc = (
+            "一个多功能的本地漫画整理工具。\n\n"
+            "支持自动化格式转换、广告清理、文件重命名、归档查重。"
+        )
+        lbl_desc = ttk.Label(
+            container,
+            text=desc,
+            justify="center",
+            font=(self.config.app.font, self.config.app.font_size),
+        )
+        lbl_desc.pack(pady=10)
+
+        f_links = ttk.Frame(container)
+        f_links.pack(pady=15)
+
+        lbl_release = ttk.Label(
+            f_links, text="⭐ 获取最新版本", foreground="#0066cc", cursor="hand2"
+        )
+        lbl_release.pack(side="left")
+        lbl_release.bind(
+            "<Button-1>",
+            lambda e: webbrowser.open("https://github.com/grasssand/koma/releases"),
+        )
+
+        ttk.Label(f_links, text="  /  ", foreground="gray").pack(side="left")
+
+        lbl_issue = ttk.Label(
+            f_links, text="提交 Issue 🐞", foreground="#0066cc", cursor="hand2"
+        )
+        lbl_issue.pack(side="left")
+        lbl_issue.bind(
+            "<Button-1>",
+            lambda e: webbrowser.open("https://github.com/grasssand/koma/issues"),
+        )
+
+        lbl_disclaimer = ttk.Label(
+            container,
+            text="免责声明：\n本软件仅供学习交流使用。查重与广告清理算法可能存在误判，\n在执行删除操作前，请务必仔细核对文件。",
+            justify="center",
+            foreground="#888",
+        )
+        lbl_disclaimer.pack(side="bottom", pady=20)
 
     def _create_text_group(self, parent, title, lines=4):
         """创建一个带标签和滚动条的文本编辑框"""
