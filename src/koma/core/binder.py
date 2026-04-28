@@ -102,7 +102,7 @@ class Binder:
             logger.info(f"✅ 收集完成，共 {total_count} 张图片")
 
             # 计算序号位数 (至少3位)
-            num_digits = max(3, len(str(total_count)))
+            num_digits = max(3, len(str(total_count + start_index - 1)))
 
             for index, src_path in enumerate(final_sequence, start=start_index):
                 try:

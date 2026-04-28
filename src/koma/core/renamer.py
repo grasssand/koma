@@ -207,7 +207,7 @@ class Renamer:
         if progress_callback:
             progress_callback(0, total_count, f"正在处理: {dir_name}")
 
-        num_digits = max(3, len(str(total_count)))
+        num_digits = max(3, len(str(total_count + start_index - 1)))
         pending_ops = []
 
         for index, src_path in enumerate(all_images, start=start_index):
