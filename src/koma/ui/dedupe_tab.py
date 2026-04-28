@@ -10,6 +10,10 @@ from koma.utils import logger
 class DedupeTab(BaseTab):
     def __init__(self, parent, config, processor, status_callback):
         super().__init__(parent, config, processor, status_callback)
+
+        self.mode_var = tk.StringVar(value="filename")
+        self.threshold_var = tk.IntVar(value=85)
+
         self._setup_ui()
 
     def _setup_ui(self):
@@ -43,8 +47,63 @@ class DedupeTab(BaseTab):
             btn_frame, text="⚠️ 清空", command=lambda: self.listbox.delete(0, tk.END)
         ).pack(fill="x", pady=2)
 
+        # 查重方式设置
+        grp_settings = ttk.LabelFrame(self, text="查重方式", padding=10)
+        grp_settings.pack(fill="x", padx=10, pady=5)
+
+        # 模式单选
+        f_mode = ttk.Frame(grp_settings)
+        f_mode.pack(fill="x")
+        ttk.Radiobutton(
+            f_mode,
+            text="文件名 (快速)",
+            variable=self.mode_var,
+            value="filename",
+            command=self._toggle_threshold,
+        ).pack(side="left", padx=(0, 15))
+
+        ttk.Radiobutton(
+            f_mode,
+            text="封面相似度",
+            variable=self.mode_var,
+            value="cover",
+            command=self._toggle_threshold,
+        ).pack(side="left")
+
+        # 阈值设置
+        ttk.Label(f_mode, text="  阈值:").pack(side="left", padx=(10, 0))
+
+        self.scale_threshold = ttk.Scale(
+            f_mode,
+            from_=80,
+            to=99,
+            variable=self.threshold_var,
+            orient="horizontal",
+            length=100,
+            command=lambda e: self.threshold_var.set(int(float(e))),
+        )
+        self.scale_threshold.pack(side="left", padx=5)
+        self.lbl_threshold_val = ttk.Label(
+            f_mode, textvariable=self.threshold_var, width=4
+        )
+        self.lbl_threshold_val.pack(side="left")
+        self.lbl_hint = ttk.Label(
+            f_mode, text="(80 - 99，值越小越宽松)", foreground="#666"
+        )
+        self.lbl_hint.pack(side="left")
+
+        # 初始化阈值框的显示状态
+        self._toggle_threshold()
+
         self.btn_run = ttk.Button(self, text="🔍 开始分析", command=self._start)
         self.btn_run.pack(fill="x", padx=40, pady=20, ipady=5)
+
+    def _toggle_threshold(self):
+        """控制阈值输入框的启用/禁用"""
+        if self.mode_var.get() == "cover":
+            self.scale_threshold.config(state="normal")
+        else:
+            self.scale_threshold.config(state="disabled")
 
     def _setup_dnd(self):
         """配置 Listbox 的拖拽接收"""
@@ -83,7 +142,9 @@ class DedupeTab(BaseTab):
             return messagebox.showerror("错误", "所有路径均无效")
 
         try:
-            DedupeWindow(self.winfo_toplevel(), valid, self.config)
+            mode = self.mode_var.get()
+            threshold = self.threshold_var.get()
+            DedupeWindow(self.winfo_toplevel(), valid, self.config, mode, threshold)
         except Exception as e:
             logger.error(f"启动查重失败: {e}")
             messagebox.showerror("错误", str(e))

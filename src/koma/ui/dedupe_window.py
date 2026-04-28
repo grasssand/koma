@@ -14,13 +14,22 @@ from koma.utils import logger
 
 
 class DedupeWindow(tk.Toplevel):
-    def __init__(self, parent, input_paths: list[Path], config: GlobalConfig):
+    def __init__(
+        self,
+        parent,
+        input_paths: list[Path],
+        config: GlobalConfig,
+        mode: str = "filename",
+        threshold: int = 85,
+    ):
         super().__init__(parent)
         self.title("📚 归档查重结果 - 扫描初始化...")
         self.geometry("900x600")
 
         self.config = config
         self.input_paths = input_paths
+        self.mode = mode
+        self.threshold = threshold
 
         self.deduplicator = Deduplicator(config.extensions, config.deduplicator)
         self.results = {}
@@ -112,7 +121,9 @@ class DedupeWindow(tk.Toplevel):
             def cb(curr, total, msg):
                 self.after(0, lambda: self.title(f"📚 查重中... {msg}"))
 
-            self.results = self.deduplicator.run(self.input_paths, progress_callback=cb)
+            self.results = self.deduplicator.run(
+                self.input_paths, self.mode, self.threshold, progress_callback=cb
+            )
 
             self.after(0, self._on_scan_complete)
 

@@ -1,3 +1,4 @@
+import io
 import logging
 import os
 import shutil
@@ -6,6 +7,9 @@ import sys
 import zipfile
 from pathlib import Path
 from typing import Literal
+
+from natsort import natsorted
+from PIL import Image
 
 from koma.config import ExtensionsConfig
 
@@ -119,6 +123,73 @@ class ArchiveHandler:
 
         logger.info(f"使用 Python 原生打包: {output_path.name} (Level: {level})")
         return self._pack_zipfile(source_dir, output_path, compression_arg)
+
+    def extract_cover(self, archive_path: Path) -> Image.Image | None:
+        """从归档文件中提取封面"""
+        if archive_path.suffix.lower() in [".zip", ".cbz"]:
+            try:
+                with zipfile.ZipFile(archive_path, "r") as zf:
+                    images = natsorted(
+                        [
+                            name
+                            for name in zf.namelist()
+                            if not name.endswith("/")
+                            and Path(name).suffix.lower()
+                            in self.config.all_supported_img
+                        ]
+                    )
+                    if images:
+                        with zf.open(images[0]) as f:
+                            return Image.open(f).copy()
+            except Exception as e:
+                logger.debug(f"原生 zipfile 提取封面失败 {archive_path.name}: {e}")
+
+        if not self.seven_zip:
+            return None
+
+        try:
+            list_cmd = [self.seven_zip, "l", "-slt", str(archive_path)]
+            list_res = subprocess.run(
+                list_cmd,
+                capture_output=True,
+                text=True,
+                errors="ignore",
+                creationflags=self._get_creation_flags(),
+            )
+
+            if list_res.returncode != 0:
+                return None
+
+            paths = []
+            for line in list_res.stdout.splitlines():
+                if line.startswith("Path = "):
+                    paths.append(line.split(" = ", 1)[1])
+
+            images = natsorted(
+                [
+                    n
+                    for n in paths
+                    if Path(n).suffix.lower() in self.config.all_supported_img
+                ]
+            )
+
+            if not images:
+                return None
+
+            target_file = images[0]
+
+            ext_cmd = [self.seven_zip, "e", str(archive_path), target_file, "-so"]
+            ext_res = subprocess.run(
+                ext_cmd, capture_output=True, creationflags=self._get_creation_flags()
+            )
+
+            if ext_res.returncode == 0 and ext_res.stdout:
+                return Image.open(io.BytesIO(ext_res.stdout)).copy()
+
+        except Exception as e:
+            logger.debug(f"7-Zip 提取封面失败 {archive_path.name}: {e}")
+
+        return None
 
     def _extract_7z(self, archive_path: Path, output_dir: Path) -> bool:
         cmd = [self.seven_zip, "x", str(archive_path), f"-o{output_dir}", "-y", "-aoa"]

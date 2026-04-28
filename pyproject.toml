@@ -22,6 +22,7 @@ classifiers = [
 ]
 dependencies = [
     "natsort>=8.4.0",
+    "onnxruntime>=1.25.1",
     "opencv-contrib-python-headless>=4.13.0.90",
     "pillow>=12.1.0",
     "send2trash>=2.1.0",

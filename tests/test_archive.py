@@ -1,10 +1,16 @@
 import shutil
 import zipfile
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from koma.core.archive import ArchiveHandler
+
+MINIMAL_PNG = (
+    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+    b"\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDAT\x08\xd7c\xf8\xff"
+    b"\xff?\x00\x05\xfe\x02\xfe\xa75\x81\x84\x00\x00\x00\x00IEND\xaeB`\x82"
+)
 
 
 @pytest.fixture
@@ -128,6 +134,69 @@ def test_real_zip_extract(tmp_path, handler_no_7z):
     assert result_path.name == "test"
     assert (result_path / "folder" / "a.txt").read_text() == "content a"
     assert (result_path / "b.txt").read_text() == "content b"
+
+
+def test_extract_cover_native_zip(tmp_path, handler_no_7z):
+    """测试原生 zipfile 提取封面，自然排序"""
+    zip_path = tmp_path / "test_cover.cbz"
+
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        # 故意打乱写入顺序，测试 natsort 是否生效
+        zf.writestr("02.png", MINIMAL_PNG)
+        zf.writestr("01.png", MINIMAL_PNG)
+        zf.writestr("info.txt", b"text data")
+
+    img = handler_no_7z.extract_cover(zip_path)
+
+    assert img is not None
+    assert img.size == (1, 1)  # 成功解析出真实的图像属性
+    assert img.format in ("PNG", None)
+
+
+def test_extract_cover_7z_fallback(tmp_path, handler_with_7z):
+    """测试 7z 内存提取封面 (针对 rar/7z)"""
+    archive_path = tmp_path / "test_cover.rar"
+    archive_path.touch()
+
+    # 伪造 7z l -slt (列表信息输出)
+    mock_list_res = MagicMock()
+    mock_list_res.returncode = 0
+    mock_list_res.stdout = "Path = 02.png\nPath = 01.png\nPath = info.txt\n"
+
+    # 伪造 7z e -so (内存流提取)
+    mock_ext_res = MagicMock()
+    mock_ext_res.returncode = 0
+    mock_ext_res.stdout = MINIMAL_PNG
+
+    with patch("subprocess.run", side_effect=[mock_list_res, mock_ext_res]) as mock_run:
+        img = handler_with_7z.extract_cover(archive_path)
+
+        assert img is not None
+        assert img.size == (1, 1)
+
+        assert mock_run.call_count == 2
+
+        # 验证第一次调用是列出文件
+        args_list = mock_run.call_args_list[0][0][0]
+        assert "l" in args_list
+        assert "-slt" in args_list
+
+        # 验证第二次调用是解压，并且精准抓取了 "01.png"
+        args_ext = mock_run.call_args_list[1][0][0]
+        assert "e" in args_ext
+        assert "-so" in args_ext
+        assert "01.png" in args_ext
+
+
+def test_extract_cover_no_images(tmp_path, handler_no_7z):
+    """测试当压缩包内没有合法图片时返回 None"""
+    zip_path = tmp_path / "no_images.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.writestr("info.txt", b"text data")
+        zf.writestr("data.bin", b"binary data")
+
+    img = handler_no_7z.extract_cover(zip_path)
+    assert img is None
 
 
 has_7z = shutil.which("7z") is not None
