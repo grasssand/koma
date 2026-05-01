@@ -25,7 +25,7 @@ class BinderTab(BaseTab):
 
         ttk.Label(
             self,
-            text="将多个文件、文件夹、压缩包按顺序合并整理到新文件夹。",
+            text="将多个图片、文件夹、压缩包按顺序合并整理到新文件夹。",
             foreground="#666",
         ).grid(row=0, sticky="w", padx=10, pady=15)
 
@@ -238,6 +238,7 @@ class BinderTab(BaseTab):
                 self.tree.move(item, self.tree.parent(item), idx + 1)
 
     def _clear_all(self):
+        self.out_var.set("")
         for item in self.tree.get_children():
             self.tree.delete(item)
 
