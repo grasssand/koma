@@ -1,6 +1,9 @@
+import json
 import sys
+import threading
 import tkinter as tk
 import tkinter.font as tkfont
+import urllib.request
 import webbrowser
 from pathlib import Path
 from tkinter import messagebox, ttk
@@ -56,6 +59,13 @@ class SettingsDialog(tk.Toplevel):
         # 底部按钮区
         btn_frame = ttk.Frame(self, padding=(10, 10))
         btn_frame.pack(side="bottom", fill="x")
+
+        self.btn_update = ttk.Button(
+            btn_frame, text="🔄 检查更新", command=self._check_update
+        )
+        self.btn_update.pack(side="left")
+        self.lbl_update_status = ttk.Label(btn_frame, text="", foreground="gray")
+        self.lbl_update_status.pack(side="left", padx=5)
 
         ttk.Button(btn_frame, text="💾 保存并关闭", command=self._save).pack(
             side="right"
@@ -329,18 +339,18 @@ class SettingsDialog(tk.Toplevel):
         lbl_release.pack(side="left")
         lbl_release.bind(
             "<Button-1>",
-            lambda e: webbrowser.open("https://github.com/grasssand/koma/releases"),
+            lambda e: webbrowser.open(koma.__releases__),
         )
 
         ttk.Label(f_links, text="  /  ", foreground="gray").pack(side="left")
 
         lbl_issue = ttk.Label(
-            f_links, text="提交 Issue 🐞", foreground="#0066cc", cursor="hand2"
+            f_links, text="提交问题 🐞", foreground="#0066cc", cursor="hand2"
         )
         lbl_issue.pack(side="left")
         lbl_issue.bind(
             "<Button-1>",
-            lambda e: webbrowser.open("https://github.com/grasssand/koma/issues"),
+            lambda e: webbrowser.open(koma.__issue_tracker__),
         )
 
         lbl_disclaimer = ttk.Label(
@@ -454,6 +464,92 @@ class SettingsDialog(tk.Toplevel):
         except Exception as e:
             logger.error(f"重置失败: {e}")
             messagebox.showerror("错误", f"重置失败: {e}")
+
+    def _fetch_latest_release(self):
+        """获取最新 Release"""
+        url = koma.__api_releases__
+        if not url:
+            self.after(
+                0,
+                lambda: messagebox.showerror("错误", "无法获取更新链接", parent=self),
+            )
+            return
+
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Koma-App"})
+            with urllib.request.urlopen(req, timeout=5) as response:
+                data = json.loads(response.read().decode("utf-8"))
+
+            latest_version = data.get("tag_name", "Unknown")
+            body = data.get("body", "无更新说明")
+            html_url = data.get("html_url", koma.__releases__)
+
+            clean_latest = latest_version.lstrip("vV")
+            clean_local = koma.__version__.lstrip("vV")
+
+            if clean_latest == clean_local:
+                self.after(0, self._show_up_to_date)
+            else:
+                self.after(
+                    0, lambda: self._show_update_dialog(latest_version, body, html_url)
+                )
+
+        except Exception as e:
+            logger.error(f"检查更新失败: {e}")
+            self.after(
+                0,
+                lambda: messagebox.showerror(
+                    "网络错误，无法获取更新信息。", parent=self
+                ),
+            )
+        finally:
+            self.after(
+                0, lambda: self.btn_update.config(state="normal", text="🔄 检查更新")
+            )
+
+    def _show_up_to_date(self):
+        """在按钮旁临时显示提示"""
+        self.lbl_update_status.config(text="已是最新版本")
+        self.after(3000, lambda: self.lbl_update_status.config(text=""))
+
+    def _show_update_dialog(self, version, body, url):
+        """显示更新说明弹窗"""
+        dialog = tk.Toplevel(self)
+        dialog.title("最新版本信息")
+        dialog.geometry("500x400")
+        dialog.transient(self)
+        dialog.grab_set()
+
+        dialog.update_idletasks()
+        x = (dialog.winfo_screenwidth() // 2) - (500 // 2)
+        y = (dialog.winfo_screenheight() // 2) - (400 // 2)
+        dialog.geometry(f"+{x}+{y}")
+
+        btn_frame = ttk.Frame(dialog, padding=10)
+        btn_frame.pack(side="bottom", fill="x")
+
+        ttk.Button(
+            btn_frame, text="去浏览器下载", command=lambda: webbrowser.open(url)
+        ).pack(side="left")
+        ttk.Button(btn_frame, text="关闭", command=dialog.destroy).pack(side="right")
+
+        txt_frame = ttk.Frame(dialog, padding=10)
+        txt_frame.pack(fill="both", expand=True)
+
+        txt = tk.Text(txt_frame, wrap="word", font=(self.config.app.font, 10))
+        scr = ttk.Scrollbar(txt_frame, command=txt.yview)
+        txt.configure(yscrollcommand=scr.set)
+
+        txt.pack(side="left", fill="both", expand=True)
+        scr.pack(side="right", fill="y")
+
+        txt.insert("1.0", f"【最新版本】 {version}\n\n【更新说明】\n{body}")
+        txt.config(state="disabled")
+
+    def _check_update(self):
+        """触发异步检查更新"""
+        self.btn_update.config(state="disabled", text="检查中...")
+        threading.Thread(target=self._fetch_latest_release, daemon=True).start()
 
     def _save(self):
         """保存配置到磁盘"""
