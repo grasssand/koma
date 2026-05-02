@@ -24,7 +24,14 @@ class DedupeWindow(tk.Toplevel):
     ):
         super().__init__(parent)
         self.title("📚 归档查重结果 - 扫描初始化...")
-        self.geometry("900x600")
+
+        window_width = 900
+        window_height = 600
+        screen_width = self.winfo_screenwidth()
+        screen_height = self.winfo_screenheight()
+        x = (screen_width - window_width) // 2
+        y = (screen_height - window_height) // 2
+        self.geometry(f"{window_width}x{window_height}+{x}+{y}")
 
         self.config = config
         self.input_paths = input_paths
@@ -48,6 +55,9 @@ class DedupeWindow(tk.Toplevel):
         ttk.Button(toolbar, text="反向选择", command=self.invert_selection).pack(
             side="left", padx=5
         )
+        ttk.Button(toolbar, text="取消选择", command=self.deselect_all).pack(
+            side="left", padx=5
+        )
 
         ttk.Separator(toolbar, orient="vertical").pack(side="left", fill="y", padx=5)
 
@@ -56,9 +66,9 @@ class DedupeWindow(tk.Toplevel):
         )
         self.btn_delete.pack(side="left", padx=5)
 
-        ttk.Label(toolbar, text="💡 双击打开文件位置", foreground="gray").pack(
-            side="right", padx=10
-        )
+        ttk.Label(
+            toolbar, text="💡 双击打开文件，中键打开位置", foreground="gray"
+        ).pack(side="right", padx=10)
 
         columns = ("check", "name", "mtime", "size", "path")
         self.tree = ttk.Treeview(
@@ -88,8 +98,9 @@ class DedupeWindow(tk.Toplevel):
         scrollbar.pack(side="right", fill="y")
 
         # 绑定事件
-        self.tree.bind("<Button-1>", self.on_click)  # 单击处理复选框
-        self.tree.bind("<Double-1>", self.on_double_click)  # 双击打开文件
+        self.tree.bind("<Button-1>", self.on_click)
+        self.tree.bind("<Double-1>", self.on_double_click)
+        self.tree.bind("<Button-2>", self.on_middle_click)
 
         # 定义样式标签
         self.tree.tag_configure(
@@ -234,27 +245,53 @@ class DedupeWindow(tk.Toplevel):
             self.tree.item(item_id, values=current_values)
 
     def on_double_click(self, event):
-        """双击打开所在文件夹"""
-        item_id = self.tree.identify_row(event.y)
-        if not item_id:
+        """双击打开文件/压缩包"""
+        file_path = self._get_path_from_event(event.y)
+        if not file_path or not file_path.exists():
             return
+
+        try:
+            if os.name == "nt":
+                os.startfile(file_path)
+            else:
+                subprocess.Popen(["xdg-open", str(file_path)], close_fds=True)
+        except Exception as e:
+            logger.error(f"无法打开文件: {e}")
+            messagebox.showerror("错误", f"无法打开文件: {e}", parent=self)
+
+    def on_middle_click(self, event):
+        """鼠标中键打开所在文件夹"""
+        file_path = self._get_path_from_event(event.y)
+        if not file_path or not file_path.exists():
+            return
+
+        try:
+            if os.name == "nt":
+                subprocess.Popen(
+                    ["explorer", "/select,", str(file_path)],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    close_fds=True,
+                    creationflags=subprocess.DETACHED_PROCESS
+                    | subprocess.CREATE_NEW_PROCESS_GROUP,
+                )
+            else:
+                subprocess.Popen(["xdg-open", str(file_path.parent)], close_fds=True)
+        except Exception as e:
+            logger.error(f"无法打开文件夹: {e}")
+            messagebox.showerror("错误", f"无法打开文件夹: {e}", parent=self)
+
+    def _get_path_from_event(self, event_y) -> Path | None:
+        """从鼠标点击事件中提取文件路径"""
+        item_id = self.tree.identify_row(event_y)
+        if not item_id:
+            return None
 
         values = self.tree.item(item_id, "values")
         if values and len(values) > 4 and values[4]:
-            file_path = Path(values[4])
-            self._open_in_explorer(file_path)
-
-    def _open_in_explorer(self, path: Path):
-        try:
-            if not path.exists():
-                return
-
-            if os.name == "nt":
-                subprocess.run(["explorer", "/select,", str(path)])
-            else:
-                subprocess.run(["xdg-open", str(path.parent)])
-        except Exception as e:
-            logger.error(f"无法打开文件浏览器: {e}")
+            return Path(values[4])
+        return None
 
     def select_older(self):
         """智能选择：保留每组中修改时间【最新】的，选中其他的"""
@@ -279,6 +316,14 @@ class DedupeWindow(tk.Toplevel):
             for child_id in self.tree.get_children(parent_id):
                 values = list(self.tree.item(child_id, "values"))
                 values[0] = "☑" if values[0] == "☐" else "☐"
+                self.tree.item(child_id, values=values)
+
+    def deselect_all(self):
+        """取消选择"""
+        for parent_id in self.tree.get_children():
+            for child_id in self.tree.get_children(parent_id):
+                values = list(self.tree.item(child_id, "values"))
+                values[0] = "☐"
                 self.tree.item(child_id, values=values)
 
     def delete_selected(self):
