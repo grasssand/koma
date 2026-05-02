@@ -16,10 +16,15 @@ jobs:
     steps:
     - uses: actions/checkout@v6
 
-    - name: Install uv
-      uses: astral-sh/setup-uv@v7
-      with:
-        python-version: '3.14'
+    - name: Install 7-Zip
+      shell: powershell
+      run: |
+        Write-Host "Copying 7-Zip from GitHub runner environment..."
+        $DestDir = "src/koma/resources/7z"
+        New-Item -ItemType Directory -Force -Path $DestDir
+        Copy-Item -Path "C:\Program Files\7-Zip\7z.exe" -Destination "$DestDir\7z.exe"
+        Copy-Item -Path "C:\Program Files\7-Zip\7z.dll" -Destination "$DestDir\7z.dll"
+        Write-Host "7-Zip binaries are ready."
 
     - name: Install FFmpeg
       shell: powershell
@@ -32,6 +37,11 @@ jobs:
         $FFmpegBin = Get-ChildItem -Path "ffmpeg_temp" -Recurse -Filter "ffmpeg.exe" | Select-Object -ExpandProperty DirectoryName -First 1
         Write-Host "Found FFmpeg binary at: $FFmpegBin"
         echo "$FFmpegBin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b
+      with:
+        python-version: '3.14'
 
     - name: Install dependencies
       run: uv sync --all-extras --all-groups
@@ -83,18 +93,20 @@ jobs:
         Add-Content -Path $env:GITHUB_ENV -Value "EOF"
 
     - name: Upload Artifact (Lite Version)
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7
       with:
         name: Koma-Lite-Build
         path: Koma-Windows-x64_*.zip
         if-no-files-found: error
+        archive: false
 
     - name: Upload Artifact (Full Version)
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7
       with:
         name: Koma-Full-Build
         path: Koma-Windows-x64-with-FFmpeg_*.zip
         if-no-files-found: error
+        archive: false
 
     - name: Release Notes
       shell: python
@@ -121,7 +133,7 @@ jobs:
                 f.write(f"Release {tag}")
 
     - name: Release
-      uses: softprops/action-gh-release@v2
+      uses: softprops/action-gh-release@v3
       if: github.ref_type == 'tag'
       with:
         files: ${{ env.RELEASE_FILES }}
