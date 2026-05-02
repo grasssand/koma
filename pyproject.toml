@@ -1,6 +1,6 @@
 [project]
 name = "Koma"
-version = "1.3.1"
+version = "1.4.0"
 description = "Manga Organization Toolbox."
 readme = "README.md"
 authors = [
@@ -48,7 +48,7 @@ Repository = "https://github.com/grasssand/koma"
 "Bug Tracker" = "https://github.com/grasssand/koma/issues"
 
 [build-system]
-requires = ["uv_build>=0.11.7,<1.0.0"]
+requires = ["uv_build>=0.11.0,<0.12.0"]
 build-backend = "uv_build"
 
 [tool.ruff]
