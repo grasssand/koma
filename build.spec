@@ -1,20 +1,45 @@
 import os
 import shutil
+
 import tkinterdnd2
 
 BUILD_WITH_FFMPEG = os.environ.get("BUILD_WITH_FFMPEG", "false").lower() == "true"
 
 block_cipher = None
 
-tkdnd_path = os.path.join(os.path.dirname(tkinterdnd2.__file__), 'tkdnd')
+tkdnd_path = os.path.join(os.path.dirname(tkinterdnd2.__file__), "tkdnd")
 datas = [
     ("src/koma/resources", "koma/resources"),
 ]
 binaries = [
     (str(tkdnd_path), "tkinterdnd2/tkdnd"),
-    ("src/koma/resources/7z/7z.exe", "koma/resources/7z"),
-    ("src/koma/resources/7z/7z.dll", "koma/resources/7z"),
 ]
+
+project_7z_exe = "src/koma/resources/7z/7z.exe"
+project_7z_dll = "src/koma/resources/7z/7z.dll"
+if os.path.exists(project_7z_exe) and os.path.exists(project_7z_dll):
+    print("Found 7-Zip in project resources.")
+    binaries.append((project_7z_exe, "koma/resources/7z"))
+    binaries.append((project_7z_dll, "koma/resources/7z"))
+else:
+    sys_7z_exe = shutil.which("7z")
+
+    if not sys_7z_exe and os.name == "nt":
+        default_sys_path = r"C:\Program Files\7-Zip\7z.exe"
+        if os.path.exists(default_sys_path):
+            sys_7z_exe = default_sys_path
+
+    if sys_7z_exe:
+        print(f"Found 7-Zip on system: {sys_7z_exe}")
+        sys_7z_dir = os.path.dirname(sys_7z_exe)
+        binaries.append((sys_7z_exe, "koma/resources/7z"))
+
+        sys_7z_dll = os.path.join(sys_7z_dir, "7z.dll")
+        if os.path.exists(sys_7z_dll):
+            binaries.append((sys_7z_dll, "koma/resources/7z"))
+    else:
+        print("WARNING: 7-Zip binaries not found! It will not be bundled.")
+
 if BUILD_WITH_FFMPEG:
     ffmpeg_path = shutil.which("ffmpeg") or "ffmpeg.exe"
     if os.path.exists(ffmpeg_path):
@@ -28,7 +53,7 @@ a = Analysis(
     pathex=[],
     binaries=binaries,
     datas=datas,
-    hiddenimports=["koma.utils.logger"],
+    hiddenimports=[],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

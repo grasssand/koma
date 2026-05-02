@@ -15,6 +15,9 @@ wheels/
 htmlcov/
 .coverage
 
+# Ignore 7-zip binaries
+src/koma/resources/7z/
+
 # Project-specific files
 data/
 config.toml
