@@ -78,8 +78,10 @@ misc_whitelist = {ext_misc}
 system_junk = {ext_junk}
 
 [scanner]
-# 是否开启广告扫描
+# 是否开启二维码广告图扫描
 enable_ad_scan = {scanner_enable_ad_str}
+# 是否开启自定义广告图扫描
+enable_custom_ad_scan = {scanner_enable_custom_ad_str}
 # 是否开启压缩包扫描
 enable_archive_scan = {scanner_enable_archive_str}
 # 二维码白名单 (包含这些域名的二维码不视为广告)
@@ -206,6 +208,7 @@ class ExtensionsConfig:
 @dataclass
 class ScannerConfig:
     enable_ad_scan: bool = False
+    enable_custom_ad_scan: bool = False
     enable_archive_scan: bool = False
     qr_whitelist: list[str] = field(
         default_factory=lambda: [
@@ -257,6 +260,12 @@ class GlobalConfig:
     deduplicator: DeduplicatorConfig = field(default_factory=DeduplicatorConfig)
     extensions: ExtensionsConfig = field(default_factory=ExtensionsConfig)
     scanner: ScannerConfig = field(default_factory=ScannerConfig)
+    config_dir: Path = field(default_factory=Path)
+
+    @property
+    def custom_ad_dir(self) -> Path:
+        """获取自定义广告文件夹的路径"""
+        return self.config_dir / "custom_ads"
 
 
 class ConfigManager:
@@ -304,13 +313,15 @@ class ConfigManager:
             with open(self.config_path, "rb") as f:
                 raw_data = tomllib.load(f)
 
-            return GlobalConfig(
+            cfg = GlobalConfig(
                 app=AppConfig(**raw_data.get("app", {})),
                 converter=ConverterConfig(**raw_data.get("converter", {})),
                 deduplicator=DeduplicatorConfig(**raw_data.get("deduplicator", {})),
                 extensions=ExtensionsConfig(**raw_data.get("extensions", {})),
                 scanner=ScannerConfig(**raw_data.get("scanner", {})),
             )
+            cfg.config_dir = self.config_path.parent
+            return cfg
         except Exception as e:
             logging.error(f"❌ 加载配置文件失败: {e}，将使用默认配置")
             return self.get_default_config()
@@ -329,6 +340,9 @@ class ConfigManager:
             converter_lossless_str="true" if cfg.converter.lossless else "false",
             deduplicator=cfg.deduplicator,
             scanner_enable_ad_str="true" if cfg.scanner.enable_ad_scan else "false",
+            scanner_enable_custom_ad_str="true"
+            if cfg.scanner.enable_custom_ad_scan
+            else "false",
             scanner_enable_archive_str="true"
             if cfg.scanner.enable_archive_scan
             else "false",
@@ -351,7 +365,9 @@ class ConfigManager:
 
     def get_default_config(self) -> GlobalConfig:
         """获取一份全新的默认配置"""
-        return GlobalConfig()
+        cfg = GlobalConfig()
+        cfg.config_dir = self.config_path.parent
+        return cfg
 
     def get_default_section(self, section_name: str):
         """

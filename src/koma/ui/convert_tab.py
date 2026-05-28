@@ -1,3 +1,5 @@
+import os
+import subprocess
 import threading
 import tkinter as tk
 from pathlib import Path
@@ -19,7 +21,9 @@ class ConvertTab(BaseTab):
         self.format_var = tk.StringVar(value=self.config.converter.format)
         self.quality_var = tk.IntVar(value=self.config.converter.quality)
         self.lossless_var = tk.BooleanVar(value=self.config.converter.lossless)
-        self.skip_ad_var = tk.BooleanVar(value=self.config.scanner.enable_ad_scan)
+        self.skip_ad_var = tk.BooleanVar(value=False)
+        self.custom_ad_scan_var = tk.BooleanVar(value=False)
+        self.custom_ad_dir = self.config.custom_ad_dir
         self.advanced_var = tk.BooleanVar(value=False)
         self.custom_params_var = tk.StringVar(
             value="-c:v libsvtav1 -preset 6 -crf 35 -pix_fmt yuv420p10le -svtav1-params tune=0:lp=2"
@@ -58,11 +62,32 @@ class ConvertTab(BaseTab):
             command=lambda: self.select_dir(self.output_var),
         ).grid(row=1, column=2)
 
+        ad_opts_frame = ttk.Frame(grp_path)
+        ad_opts_frame.grid(row=2, column=1, sticky="w", pady=(5, 0))
+
         ttk.Checkbutton(
-            grp_path,
-            text="跳过广告图片（需要更多时间扫描检测广告）",
+            ad_opts_frame,
+            text="跳过广告图片",
             variable=self.skip_ad_var,
-        ).grid(row=2, column=1, sticky="w")
+            command=self._toggle_ad_options,
+        ).pack(side="left")
+
+        self.chk_custom_ad = ttk.Checkbutton(
+            ad_opts_frame,
+            text="自定义广告图",
+            variable=self.custom_ad_scan_var,
+            command=self._toggle_ad_options,
+        )
+        self.chk_custom_ad.pack(side="left", padx=(15, 5))
+
+        self.btn_open_custom_ad = ttk.Button(
+            ad_opts_frame, text="📂 打开图库", command=self._open_custom_ad_dir
+        )
+        self.btn_open_custom_ad.pack(side="left")
+
+        ttk.Label(
+            ad_opts_frame, text="(开启后扫描会花费更多时间)", foreground="gray"
+        ).pack(side="left", padx=10)
 
         grp_param = ttk.LabelFrame(self, text="转换参数", padding=10)
         grp_param.pack(fill="x", padx=10, pady=5)
@@ -139,6 +164,7 @@ class ConvertTab(BaseTab):
         self.btn_run = ttk.Button(self, text="🔁 开始转换", command=self._start)
         self.btn_run.pack(fill="x", padx=20, pady=20, ipady=5)
 
+        self._toggle_ad_options()
         self._toggle_quality()
 
     def _on_input_change(self, *args):
@@ -153,6 +179,29 @@ class ConvertTab(BaseTab):
                 self.output_var.set(str(suggested))
         except Exception:
             pass
+
+    def _toggle_ad_options(self):
+        main_enabled = self.skip_ad_var.get()
+
+        if main_enabled:
+            self.chk_custom_ad.config(state="normal")
+        else:
+            self.chk_custom_ad.config(state="disabled")
+
+        if main_enabled and self.custom_ad_scan_var.get():
+            self.btn_open_custom_ad.config(state="normal")
+        else:
+            self.btn_open_custom_ad.config(state="disabled")
+
+    def _open_custom_ad_dir(self):
+        self.custom_ad_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            if os.name == "nt":
+                os.startfile(str(self.custom_ad_dir))
+            else:
+                subprocess.run(["xdg-open", str(self.custom_ad_dir)])
+        except Exception as e:
+            logger.error(f"无法打开文件夹: {e}")
 
     def _toggle_quality(self):
         state = "disabled" if self.lossless_var.get() else "normal"
@@ -205,12 +254,16 @@ class ConvertTab(BaseTab):
             )
 
             def gen():
-                self.config.scanner.enable_ad_scan = self.skip_ad_var.get()
+                options = {
+                    "enable_ad_scan": self.skip_ad_var.get(),
+                    "enable_custom_ad_scan": self.custom_ad_scan_var.get(),
+                    "custom_ad_dir": str(self.custom_ad_dir),
+                    "enable_archive_scan": False,
+                }
                 scanner = Scanner(
                     Path(inp), self.config.extensions, self.image_processor
                 )
-                for root, res in scanner.run():
-                    # 如果不跳过广告，则把广告当作普通图片处理
+                for root, res in scanner.run(options=options):
                     if not self.skip_ad_var.get() and res.ads:
                         res.to_convert.extend(res.ads)
                         res.ads.clear()

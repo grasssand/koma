@@ -22,7 +22,10 @@ class SacnTab(BaseTab):
         # 变量初始化
         self.path_var = tk.StringVar()
         self.ad_scan_var = tk.BooleanVar(value=self.config.scanner.enable_ad_scan)
-
+        self.custom_ad_scan_var = tk.BooleanVar(
+            value=self.config.scanner.enable_custom_ad_scan
+        )
+        self.custom_ad_dir = self.config.custom_ad_dir
         self.archive_scan_var = tk.BooleanVar(
             value=self.config.scanner.enable_archive_scan
         )
@@ -82,10 +85,30 @@ class SacnTab(BaseTab):
 
         chk_frame = ttk.Frame(path_grp)
         chk_frame.grid(row=1, column=0, columnspan=3, sticky="w", pady=(10, 0))
+        ad_opts_frame = ttk.Frame(chk_frame)
+        ad_opts_frame.pack(side="left")
 
-        ttk.Checkbutton(chk_frame, text="检测广告图片", variable=self.ad_scan_var).pack(
-            side="left", padx=(0, 15)
+        ttk.Checkbutton(
+            ad_opts_frame,
+            text="检测广告图片",
+            variable=self.ad_scan_var,
+            command=self._toggle_ad_options,
+        ).pack(side="left", padx=(0, 10))
+
+        self.chk_custom_ad = ttk.Checkbutton(
+            ad_opts_frame,
+            text="自定义广告图",
+            variable=self.custom_ad_scan_var,
+            command=self._toggle_ad_options,
         )
+        self.chk_custom_ad.pack(side="left", padx=(0, 5))
+
+        self.btn_open_custom_ad = ttk.Button(
+            ad_opts_frame, text="📂 打开图库", command=self._open_custom_ad_dir
+        )
+        self.btn_open_custom_ad.pack(side="left", padx=(5, 0))
+
+        self._toggle_ad_options()
 
         ttk.Separator(chk_frame, orient="vertical").pack(side="left", fill="y", padx=15)
 
@@ -444,6 +467,30 @@ class SacnTab(BaseTab):
         except Exception:
             pass
 
+    def _toggle_ad_options(self):
+        main_enabled = self.ad_scan_var.get()
+
+        if main_enabled:
+            self.chk_custom_ad.config(state="normal")
+        else:
+            self.chk_custom_ad.config(state="disabled")
+
+        if main_enabled and self.custom_ad_scan_var.get():
+            self.btn_open_custom_ad.config(state="normal")
+        else:
+            self.btn_open_custom_ad.config(state="disabled")
+            self.btn_open_custom_ad.config(state="disabled")
+
+    def _open_custom_ad_dir(self):
+        self.custom_ad_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            if os.name == "nt":
+                os.startfile(str(self.custom_ad_dir))
+            else:
+                subprocess.run(["xdg-open", str(self.custom_ad_dir)])
+        except Exception as e:
+            logger.error(f"无法打开文件夹: {e}")
+
     def _toggle_archive_options(self):
         if self.archive_scan_var.get():
             self.archive_opts_frame.grid()
@@ -470,6 +517,8 @@ class SacnTab(BaseTab):
 
         options = {
             "enable_ad_scan": self.ad_scan_var.get(),
+            "enable_custom_ad_scan": self.custom_ad_scan_var.get(),
+            "custom_ad_dir": str(self.custom_ad_dir),
             "enable_archive_scan": self.archive_scan_var.get(),
             "archive_out_path": self.archive_out_path_var.get(),
             "repack": self.repack_var.get(),

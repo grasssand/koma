@@ -41,9 +41,6 @@ class ImageProcessor:
 
     def has_ad_qrcode(self, file_path: Path) -> bool:
         """检测是否包含广告二维码"""
-        if not self.config.enable_ad_scan:
-            return False
-
         try:
             img_array = np.fromfile(str(file_path), dtype=np.uint8)
             img = cv2.imdecode(img_array, cv2.IMREAD_GRAYSCALE)
@@ -82,7 +79,7 @@ class ImageProcessor:
                         break
 
                 if not is_safe:
-                    logger.info(f"🚫 发现广告二维码: {url[:30]}... 在 {file_path.name}")
+                    logger.info(f"🚫 发现二维码广告: {url[:30]}... 在 {file_path}")
                     return True
 
             return False

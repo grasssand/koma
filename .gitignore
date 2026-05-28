@@ -20,4 +20,5 @@ src/koma/resources/7z/
 
 # Project-specific files
 data/
+custom_ads/
 config.toml

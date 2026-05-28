@@ -1,8 +1,10 @@
 import errno
+import shutil
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from PIL import Image
 
 from koma.core.image_processor import ImageInfo
 from koma.core.scanner import Scanner
@@ -279,7 +281,7 @@ def test_clean_directory_recursive_real_logic(
 
     scanner = Scanner(tmp_path, ext_config, mock_image_processor)
 
-    deleted_count = scanner._clean_directory_recursive(target_dir, check_ads=True)
+    deleted_count = scanner._clean_directory_recursive(target_dir, True, False)
 
     # 预期删除: thumbs.db, ad_01.jpg, .DS_Store
     assert deleted_count == 3
@@ -289,3 +291,65 @@ def test_clean_directory_recursive_real_logic(
     assert not ad_file.exists(), "广告文件未被删除"
     assert not sub_junk.exists(), "子文件夹垃圾未被删除"
     assert normal_file.exists(), "正常文件被误删"
+
+
+@pytest.fixture
+def custom_ad_dir(tmp_path):
+    """生成一个包含两张测试广告的自定义图库目录"""
+    ad_dir = tmp_path / "custom_ads"
+    ad_dir.mkdir()
+
+    # 生成一张具有明显特征的广告图 (左半白，右半黑)
+    img_pattern = Image.new("L", (100, 100), color=255)
+    for y in range(100):
+        for x in range(50, 100):  # 将右半边涂黑
+            img_pattern.putpixel((x, y), 0)
+    img_pattern.save(ad_dir / "pattern_ad.jpg")
+
+    # 生成一张纯黑色的广告图
+    img_black = Image.new("RGB", (50, 50), "black")
+    img_black.save(ad_dir / "black_ad.png")
+
+    return str(ad_dir)
+
+
+def test_scanner_custom_ad_matching(
+    scanner_setup, ext_config, mock_image_processor, custom_ad_dir
+):
+    """测试自定义广告"""
+
+    # 复制广告图
+    shutil.copy(
+        Path(custom_ad_dir) / "pattern_ad.jpg", scanner_setup / "08_pattern_ad.jpg"
+    )
+
+    # 放一张正常的白色的图片
+    Image.new("RGB", (50, 50), "white").save(scanner_setup / "09_white_page.jpg")
+    # 放一张正常的灰色图片
+    Image.new("RGB", (50, 50), "gray").save(scanner_setup / "01_normal_page.jpg")
+
+    mock_image_processor.analyze.return_value = ImageInfo(False, False)
+    mock_image_processor.has_ad_qrcode.return_value = False
+
+    scanner = Scanner(scanner_setup, ext_config, mock_image_processor)
+    options = {
+        "enable_ad_scan": True,
+        "enable_custom_ad_scan": True,
+        "custom_ad_dir": custom_ad_dir,
+    }
+
+    results = list(scanner.run(options=options))
+    res = results[0][1]
+
+    ads_names = [p.name for p in res.ads]
+    convert_names = [p.name for p in res.to_convert]
+
+    # 应被识别为广告
+    assert "08_pattern_ad.jpg" in ads_names
+
+    # 不被视为广告
+    assert "09_white_page.jpg" not in ads_names
+    assert "09_white_page.jpg" in convert_names
+
+    assert "01_normal_page.jpg" not in ads_names
+    assert "01_normal_page.jpg" in convert_names

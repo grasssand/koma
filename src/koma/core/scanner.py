@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from natsort import natsorted
+from PIL import Image
 
 from koma.config import ExtensionsConfig
 from koma.core.archive import ArchiveHandler
@@ -57,9 +58,16 @@ class Scanner:
     ) -> Generator[tuple[Path, ScanResult], None, None]:
         options = options or {}
         enable_ad_scan = options.get("enable_ad_scan", False)
+        enable_custom_ad_scan = options.get("enable_custom_ad_scan", False)
+        custom_ad_dir = options.get("custom_ad_dir")
         enable_archive_scan = options.get("enable_archive_scan", False)
         out_dir_str = options.get("archive_out_path")
         exclude_path = Path(out_dir_str).resolve() if out_dir_str else None
+
+        if enable_ad_scan and enable_custom_ad_scan:
+            self.custom_ad_hashes = self._load_custom_ads(custom_ad_dir)
+        else:
+            self.custom_ad_hashes = []
 
         try:
             for root, dirs, files in self.input_dir.walk():
@@ -101,6 +109,7 @@ class Scanner:
                     is_junk_file = self._is_junk(f_path)
 
                     if is_junk_file:
+                        logger.info(f"⚠️ 发现杂项文件: {f_path}")
                         result.junk.append(f_path)
                         continue
 
@@ -111,7 +120,7 @@ class Scanner:
                 confirmed_ads = set()
                 if image_candidates and enable_ad_scan:
                     confirmed_ads = self._detect_ads_in_folder(
-                        root_path, image_candidates
+                        root_path, image_candidates, enable_custom_ad_scan
                     )
 
                 # 结果归类
@@ -162,7 +171,9 @@ class Scanner:
 
                 # 清理
                 deleted_count = self._clean_directory_recursive(
-                    content_root, check_ads=options.get("enable_ad_scan", False)
+                    content_root,
+                    options.get("enable_ad_scan", False),
+                    options.get("enable_custom_ad_scan", False),
                 )
                 if deleted_count == 0:
                     logger.info(f"⏩ 跳过干净压缩包: {archive_path.name}")
@@ -208,7 +219,9 @@ class Scanner:
             logger.error(f"处理压缩包失败 {archive_path}: {e}")
             return False
 
-    def _clean_directory_recursive(self, target_dir: Path, check_ads: bool) -> int:
+    def _clean_directory_recursive(
+        self, target_dir: Path, enable_ad_scan: bool, enable_custom_ad_scan: bool
+    ) -> int:
         """递归清理临时目录中的垃圾和广告"""
         deleted_count = 0
 
@@ -232,8 +245,10 @@ class Scanner:
                     image_candidates.append(f)
 
             # 删广告
-            if check_ads and image_candidates:
-                ads = self._detect_ads_in_folder(root_path, image_candidates)
+            if enable_ad_scan and image_candidates:
+                ads = self._detect_ads_in_folder(
+                    root_path, image_candidates, enable_custom_ad_scan
+                )
                 for ad in ads:
                     try:
                         (root_path / ad).unlink()
@@ -262,12 +277,14 @@ class Scanner:
     def _is_archive(self, path: Path) -> bool:
         return path.suffix.lower() in self.ext_config.archive
 
-    def _detect_ads_in_folder(self, root: Path, images: list[str]) -> set[str]:
-        """倒序检测文件夹内的广告图片"""
+    def _detect_ads_in_folder(
+        self, root: Path, images: list[str], enable_custom_ad_scan: bool = False
+    ) -> set[str]:
+        """检测结尾二维码和自定义广告图"""
         confirmed = set()
 
         # 倒序检查最后几张图
-        for i in range(len(images) - 1, -1, -1):
+        for i in range(len(images) - 1, 0, -1):
             img_name = images[i]
             img_path = root / img_name
             try:
@@ -286,6 +303,28 @@ class Scanner:
                 # 遇到第一张非广告图，停止倒序扫描
                 break
 
+        # 检测首2尾3自定义图
+        if enable_custom_ad_scan and self.custom_ad_hashes:
+            # 排除掉已经被刚才判定为二维码的图片
+            remaining = [img for img in images if img not in confirmed]
+            first_2 = remaining[:2]
+            last_3 = remaining[-3:] if len(remaining) >= 3 else remaining
+            candidates_to_check = list(dict.fromkeys(first_2 + last_3))
+
+            for img_name in candidates_to_check:
+                img_path = root / img_name
+                img_data = self._calc_dhash(img_path)
+
+                if img_data is not None:
+                    img_hash, img_brightness = img_data
+                    for ad_hash, ad_brightness in self.custom_ad_hashes:
+                        distance = bin(img_hash ^ ad_hash).count("1")
+
+                        if distance <= 5 and abs(img_brightness - ad_brightness) <= 30:
+                            logger.info(f"🚫 发现自定义广告: {img_path}")
+                            confirmed.add(img_name)
+                            break
+
         return confirmed
 
     def _categorize_files(
@@ -301,3 +340,43 @@ class Scanner:
                 result.to_convert.append(file_path)
             elif suffix in self.ext_config.passthrough:
                 result.to_copy.append(file_path)
+
+    def _calc_dhash(self, img_path: Path) -> tuple[int, float] | None:
+        """计算差异哈希和平均亮度"""
+        try:
+            with Image.open(img_path) as img:
+                img = img.convert("L").resize((9, 8), Image.Resampling.LANCZOS)
+                pixels = list(img.getdata())
+                mean_brightness = sum(pixels) / len(pixels)
+
+                diff = []
+                for row in range(8):
+                    for col in range(8):
+                        idx = row * 9 + col
+                        diff.append(1 if pixels[idx] > pixels[idx + 1] else 0)
+
+                hash_val = sum(v << i for i, v in enumerate(diff))
+
+                return hash_val, mean_brightness
+        except Exception as e:
+            logger.debug(f"哈希计算失败 {img_path.name}: {e}")
+            return None
+
+    def _load_custom_ads(self, custom_ad_dir: str | None) -> list[tuple[int, float]]:
+        """计算自定义广告的特征库"""
+        ad_hashes = []
+        if not custom_ad_dir:
+            return ad_hashes
+
+        path = Path(custom_ad_dir)
+        if not path.exists() or not path.is_dir():
+            path.mkdir(parents=True, exist_ok=True)
+            return ad_hashes
+
+        for f in path.iterdir():
+            if f.is_file() and f.suffix.lower() in self.supported_img:
+                h = self._calc_dhash(f)
+                if h is not None:
+                    ad_hashes.append(h)
+
+        return ad_hashes
