@@ -16,6 +16,8 @@ def _opts_avif(
 
     # AOM 画质大小更优，但是速度很慢
     if "aom" in raw_fmt:
+        aom_params = ["tune=ssim"]
+
         if is_lossless_mode:
             crf = 0
             cpu_used = "6"
@@ -24,6 +26,7 @@ def _opts_avif(
             crf = max(0, min(63, int((100 - quality) * 0.6 + 8)))
             cpu_used = "6"
 
+        aom_params_str = ":".join(aom_params)
         cmd.extend(
             [
                 "-c:v",
@@ -34,6 +37,10 @@ def _opts_avif(
                 str(crf),
                 "-pix_fmt",
                 pix_fmt,
+                "-still-picture",
+                "0" if is_anim else "1",
+                "-aom-params",
+                aom_params_str,
                 "-b:v",
                 "0",
             ]
@@ -41,6 +48,7 @@ def _opts_avif(
     else:
         # SVT-AV1 速度快
         svt_params = ["tune=0", "lp=2"]
+
         if is_lossless_mode:
             crf = 0
             svt_params.append("lossless=1")
@@ -49,6 +57,9 @@ def _opts_avif(
             # SVT-AV1 的 CRF 范围是 0-63, quality(75) -> crf(35)
             crf = max(0, min(63, int((100 - quality) * 0.76 + 16)))
             preset = "6"
+
+        if not is_anim:
+            svt_params.append("avif=1")
 
         svt_params_str = ":".join(svt_params)
         cmd.extend(
