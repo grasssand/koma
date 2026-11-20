@@ -1,3 +1,4 @@
+import math
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -164,3 +165,137 @@ def test_extract_embedding_internal_coverage(tmp_path, ext_config, dedupe_config
     mock_session.run.side_effect = Exception("模拟 ONNX 崩溃")
     emb_error = deduper._extract_embedding(item_rgb)
     assert emb_error is None  # 发生异常时应返回 None
+
+
+def test_volumes_are_not_grouped(tmp_path, ext_config, dedupe_config):
+    """Vol.1 与 Vol.2 是不同卷，不能被合并成一组"""
+    input_dir = tmp_path / "volumes"
+    input_dir.mkdir()
+    for name in (
+        "[社团] 标题 (Vol.1).zip",
+        "[社团] 标题 (Vol.2).zip",
+    ):
+        (input_dir / name).touch()
+
+    deduper = Deduplicator(ext_config, dedupe_config)
+    results = deduper.run([input_dir], mode="filename")
+
+    # 两卷各自成组、每组只有 1 个成员 → 不构成重复
+    assert results == {}
+
+
+@patch("koma.core.deduplicator.Deduplicator._init_onnx")
+@patch("koma.core.deduplicator.Deduplicator._extract_embedding")
+def test_cover_mode_updates_cluster_centroid(
+    mock_extract, mock_init, tmp_path, ext_config, dedupe_config
+):
+    """
+    簇质心必须随成员更新（归一化的运行均值），否则链式相似会漏。
+
+    构造三个等角距的向量：A=0°、B=18°、C=36°，阈值 85%：
+      sim(A,B)=cos18°≈0.951  → B 并入 A
+      sim(C,A)=cos36°≈0.809  → 低于阈值（旧实现到此为止，C 自成一簇）
+      sim(C,质心)=cos27°≈0.891 → 高于阈值（质心更新后 C 能并入）
+    """
+    input_dir = tmp_path / "chain"
+    input_dir.mkdir()
+    for name in ("a.zip", "b.zip", "c.zip"):
+        (input_dir / name).touch()
+
+    def unit_at(deg: float) -> np.ndarray:
+        r = math.radians(deg)
+        return np.array([math.cos(r), math.sin(r)])
+
+    mapping = {
+        "a.zip": unit_at(0),
+        "b.zip": unit_at(18),
+        "c.zip": unit_at(36),
+    }
+    mock_extract.side_effect = lambda item: mapping.get(item.path.name)
+
+    deduper = Deduplicator(ext_config, dedupe_config)
+    results = deduper.run([input_dir], mode="cover", similarity_threshold=85)
+
+    assert len(results) == 1
+    key = next(iter(results))
+    assert len(results[key]) == 3
+
+
+def test_overlapping_roots_and_hardlinks_are_collected_once(
+    tmp_path, ext_config, dedupe_config
+):
+    """重叠输入根及同一文件的硬链接不会制造重复候选。"""
+    root = tmp_path / "library"
+    child = root / "series"
+    child.mkdir(parents=True)
+    original = child / "[社团] 作品.zip"
+    original.touch()
+    hardlink = child / "[社团] 作品-copy.zip"
+    hardlink.hardlink_to(original)
+
+    deduper = Deduplicator(ext_config, dedupe_config)
+    results = deduper.run([root, child], mode="filename")
+
+    assert results == {}
+
+
+@patch("koma.core.deduplicator.Deduplicator._init_onnx")
+@patch("koma.core.deduplicator.Deduplicator._extract_embedding")
+def test_image_bearing_non_leaf_directory_is_candidate(
+    mock_extract, mock_init, tmp_path, ext_config, dedupe_config
+):
+    """含图的非叶子目录也应参与封面查重。"""
+    root = tmp_path / "library"
+    child = root / "chapter"
+    child.mkdir(parents=True)
+    (root / "cover.jpg").touch()
+    (child / "page.jpg").touch()
+    mock_extract.return_value = np.array([1.0, 0.0, 0.0])
+
+    deduper = Deduplicator(ext_config, dedupe_config)
+    results = deduper.run([root], mode="cover", similarity_threshold=99)
+
+    assert len(results) == 1
+    assert {item.path for item in next(iter(results.values()))} == {root, child}
+
+
+@patch("koma.core.deduplicator.Deduplicator._init_onnx")
+@patch("koma.core.deduplicator.Deduplicator._extract_embedding")
+def test_cover_groups_with_same_display_name_keep_both(
+    mock_extract, mock_init, tmp_path, ext_config, dedupe_config
+):
+    """封面组代表文件同名时，结果键仍需唯一。"""
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    for directory, names in (
+        (first, ("book.zip", "first-peer.zip")),
+        (second, ("book.zip", "second-peer.zip")),
+    ):
+        for name in names:
+            (directory / name).touch()
+
+    def extract(item):
+        if not item.is_archive:
+            return None
+        if item.path.parent == first:
+            return (
+                np.array([1.0, 0.0])
+                if item.path.name == "book.zip"
+                else np.array([0.99, 0.1])
+            )
+        return (
+            np.array([0.0, 1.0])
+            if item.path.name == "book.zip"
+            else np.array([0.1, 0.99])
+        )
+
+    mock_extract.side_effect = extract
+
+    deduper = Deduplicator(ext_config, dedupe_config)
+    results = deduper.run([first, second], mode="cover", similarity_threshold=95)
+
+    assert len(results) == 2
+    assert len(set(results)) == 2
+    assert all(len(items) == 2 for items in results.values())

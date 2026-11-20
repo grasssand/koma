@@ -1,4 +1,5 @@
 import logging
+import os
 import re
 import sys
 from collections import defaultdict
@@ -7,7 +8,6 @@ from pathlib import Path
 from typing import NamedTuple
 
 import numpy as np
-import onnxruntime as ort
 from natsort import natsorted
 from PIL import Image
 
@@ -47,6 +47,8 @@ class Deduplicator:
         if self.ort_session is not None:
             return
 
+        import onnxruntime as ort
+
         if getattr(sys, "frozen", False):
             base_path = Path(sys._MEIPASS) / "koma"  # type: ignore
         else:
@@ -70,27 +72,42 @@ class Deduplicator:
         progress_callback: Callable[[int, int, str], None] | None = None,
     ) -> dict[str, list[DuplicateItem]]:
         all_items: list[DuplicateItem] = []
+        seen_entities: set[tuple] = set()
         archive_exts = self.ext_config.archive | self.ext_config.document
+        image_exts = self.ext_config.all_supported_img
+
+        def add_item(item: DuplicateItem):
+            entity_key = self._entity_key(item.path)
+            if entity_key in seen_entities:
+                return
+            seen_entities.add(entity_key)
+            all_items.append(item)
 
         for root in input_paths:
-            root = Path(root)
+            root = self._resolved_path(Path(root))
             if not root.exists():
                 continue
 
             for dirpath, dirnames, filenames in root.walk():
                 dirnames[:] = [d for d in dirnames if not d.startswith(".")]
-                current_dir = Path(dirpath)
+                current_dir = self._resolved_path(Path(dirpath))
 
                 if progress_callback:
                     progress_callback(0, 0, f"扫描收集目录中: {current_dir.name[:27]}")
 
-                if not dirnames:
-                    all_items.append(DuplicateItem(current_dir, is_archive=False))
+                # 保留原有“叶子目录也是候选”的语义，同时支持目录自身含图但
+                # 仍有子目录的情况（例如封面在根目录、正文在子目录）。
+                has_images = any(
+                    Path(filename).suffix.lower() in image_exts
+                    for filename in filenames
+                )
+                if not dirnames or has_images:
+                    add_item(DuplicateItem(current_dir, is_archive=False))
 
-                for f in filenames:
-                    f_path = current_dir / f
-                    if f_path.suffix.lower() in archive_exts:
-                        all_items.append(DuplicateItem(f_path, is_archive=True))
+                for filename in filenames:
+                    file_path = self._resolved_path(current_dir / filename)
+                    if file_path.suffix.lower() in archive_exts:
+                        add_item(DuplicateItem(file_path, is_archive=True))
 
         if not all_items:
             return {}
@@ -176,15 +193,40 @@ class Deduplicator:
                     best_match_idx = c_idx
 
             if best_sim >= threshold:
-                clusters[best_match_idx]["items"].append(item)
+                cluster = clusters[best_match_idx]
+                cluster["items"].append(item)
+                # 质心更新为「已归一化的运行均值」。
+                # 旧实现永远拿簇内第一个样本当中心、新成员不参与，
+                # 阈值判定会随簇增长而漂移，链式相似（A≈B≈C）也容易漏。
+                count = len(cluster["items"])
+                center = (cluster["center_emb"] * (count - 1) + emb) / count
+                norm = np.linalg.norm(center)
+                cluster["center_emb"] = center / norm if norm > 0 else center
             else:
                 clusters.append({"center_emb": emb, "items": [item]})
 
-        items_map = {}
+        grouped_clusters: dict[str, list[dict]] = defaultdict(list)
         for cluster in clusters:
             if len(cluster["items"]) > 1:
                 rep_name = cluster["items"][0].path.stem
-                items_map[f"相似组: {rep_name}"] = cluster["items"]
+                grouped_clusters[f"相似组: {rep_name}"].append(cluster)
+
+        # 同名封面组不能互相覆盖；同一显示名下按首个路径稳定编号。
+        items_map = {}
+        for base_key in natsorted(grouped_clusters):
+            same_name = grouped_clusters[base_key]
+            if len(same_name) > 1:
+                same_name.sort(
+                    key=lambda cluster: str(
+                        self._resolved_path(cluster["items"][0].path)
+                    )
+                )
+            for index, cluster in enumerate(same_name, start=1):
+                key = base_key if len(same_name) == 1 else f"{base_key} ({index})"
+                while key in items_map:
+                    index += 1
+                    key = f"{base_key} ({index})"
+                items_map[key] = cluster["items"]
 
         if progress_callback:
             progress_callback(total, total, "封面比对分析完成")
@@ -193,16 +235,46 @@ class Deduplicator:
 
     def _format_results(self, items_map: dict) -> dict[str, list[DuplicateItem]]:
         final_results = {}
-        valid_keys = [k for k, v in items_map.items() if len(v) > 1]
-        sorted_keys = natsorted(valid_keys)
-        for key in sorted_keys:
-            items = items_map[key]
+        valid_groups = []
+        for key, values in items_map.items():
+            unique_items = []
+            seen_entities: set[tuple] = set()
+            for item in values:
+                entity_key = self._entity_key(item.path)
+                if entity_key not in seen_entities:
+                    seen_entities.add(entity_key)
+                    unique_items.append(item)
+            if len(unique_items) > 1:
+                valid_groups.append((key, unique_items))
+
+        for key in natsorted([pair[0] for pair in valid_groups]):
+            items = next(items for group_key, items in valid_groups if group_key == key)
             items.sort(
                 key=lambda x: x.path.stat().st_mtime if x.path.exists() else 0,
                 reverse=True,
             )
             final_results[key] = items
         return final_results
+
+    @staticmethod
+    def _resolved_path(path: Path) -> Path:
+        """获取稳定的实际路径，尽量消除符号链接和相对路径别名。"""
+        try:
+            return path.resolve(strict=False)
+        except (OSError, RuntimeError):
+            return Path(os.path.abspath(path))
+
+    @classmethod
+    def _entity_key(cls, path: Path) -> tuple:
+        """按实际路径及文件系统实体识别同一文件或目录。"""
+        resolved = cls._resolved_path(path)
+        try:
+            stat = resolved.stat()
+        except OSError:
+            return ("path", os.path.normcase(str(resolved)))
+        if stat.st_ino:
+            return ("stat", stat.st_dev, stat.st_ino)
+        return ("path", os.path.normcase(str(resolved)))
 
     def _normalize_text(self, text: str) -> str:
         """归一化：全角转半角，去多余空格，转小写"""
