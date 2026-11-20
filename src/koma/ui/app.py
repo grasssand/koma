@@ -10,11 +10,12 @@ from PIL import Image, ImageTk
 import koma
 from koma.config import ConfigManager
 from koma.core.image_processor import ImageProcessor
+from koma.ui.base_tab import active_file_tasks
 from koma.ui.binder_tab import BinderTab
 from koma.ui.convert_tab import ConvertTab
 from koma.ui.dedupe_tab import DedupeTab
 from koma.ui.rename_tab import RenameTab
-from koma.ui.scan_tab import SacnTab
+from koma.ui.scan_tab import ScanTab
 from koma.ui.settings import SettingsDialog
 from koma.ui.utils import TextHandler, get_monospace_font, get_sans_font
 from koma.utils import get_default_formatter, logger, setup_file_logging
@@ -26,6 +27,7 @@ class KomaGUI:
         config = self.cfg_manager.load()
 
         self.root = root
+        self._close_wait_scheduled = False
         self.root.title(f"KOMA - 漫画工具箱 v{koma.__version__}")
         self.root.geometry(f"{config.app.width}x{config.app.height}")
 
@@ -41,6 +43,7 @@ class KomaGUI:
         self._setup_ui()
         self._setup_global_font()
         self._setup_logging_redirect()
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _setup_icon(self):
         """加载应用程序图标"""
@@ -89,7 +92,7 @@ class KomaGUI:
         self.notebook.pack(fill="both", expand=True, padx=10, pady=5)
 
         tabs = [
-            (SacnTab, " 🧹 扫描清理 "),
+            (ScanTab, " 🧹 扫描清理 "),
             (RenameTab, " ⚒️ 重命名 "),
             (ConvertTab, " 🎨 格式转换 "),
             (DedupeTab, " 📚 归档查重 "),
@@ -188,3 +191,20 @@ class KomaGUI:
             else:
                 self.progress.stop()
                 self.progress.config(mode="determinate")
+
+    def _on_close(self):
+        """等待所有文件操作安全结束后再关闭窗口。"""
+        if active_file_tasks() == 0:
+            self.root.destroy()
+            return
+
+        self.status_var.set("文件任务仍在运行，完成后将自动关闭窗口...")
+        if not self._close_wait_scheduled:
+            self._close_wait_scheduled = True
+            self.root.after(100, self._close_when_idle)
+
+    def _close_when_idle(self):
+        if active_file_tasks() > 0:
+            self.root.after(100, self._close_when_idle)
+            return
+        self.root.destroy()

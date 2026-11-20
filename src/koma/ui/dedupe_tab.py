@@ -144,7 +144,15 @@ class DedupeTab(BaseTab):
         try:
             mode = self.mode_var.get()
             threshold = self.threshold_var.get()
-            DedupeWindow(self.winfo_toplevel(), valid, self.config, mode, threshold)
+            DedupeWindow(
+                self.winfo_toplevel(),
+                valid,
+                self.config,
+                mode,
+                threshold,
+                task_launcher=self.start_file_task,
+                ui_dispatch=self.call_in_main_thread,
+            )
         except Exception as e:
             logger.error(f"启动查重失败: {e}")
             messagebox.showerror("错误", str(e))

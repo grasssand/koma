@@ -1,10 +1,9 @@
-import threading
 import tkinter as tk
 from pathlib import Path
 from tkinter import messagebox, ttk
 
 from koma.config import ARCHIVE_OUTPUT_FORMATS
-from koma.core.renamer import Renamer
+from koma.core.renamer import RenameBatchError, Renamer
 from koma.ui.base_tab import BaseTab
 from koma.utils import logger
 
@@ -94,44 +93,54 @@ class RenameTab(BaseTab):
         if not path:
             return messagebox.showerror("错误", "请选择路径")
 
+        try:
+            options = {
+                "export_csv": self.csv_var.get(),
+                "prefix": self.filename_prefix_var.get(),
+                "start_index": self.filename_start_index_var.get(),
+                "enable_archive_scan": self.enable_archive_scan_var.get(),
+                "pack_format": self.pack_fmt_var.get(),
+            }
+        except (tk.TclError, ValueError):
+            return messagebox.showerror("错误", "起始编号必须是非负整数")
+        if options["start_index"] < 0:
+            return messagebox.showerror("错误", "起始编号不能为负数")
+
         warn_msg = "确定要执行重命名吗？操作不可逆。"
-        if self.enable_archive_scan_var.get():
+        if options["enable_archive_scan"]:
             warn_msg += "\n\n注意：已勾选处理压缩包，原压缩文件将被移至回收站。"
 
         if not messagebox.askyesno("警告", warn_msg):
             return
 
         self.btn_start.config(state="disabled")
-
-        options = {
-            "export_csv": self.csv_var.get(),
-            "prefix": self.filename_prefix_var.get(),
-            "start_index": self.filename_start_index_var.get(),
-            "enable_archive_scan": self.enable_archive_scan_var.get(),
-            "pack_format": self.pack_fmt_var.get(),
-        }
-        threading.Thread(
-            target=self._run_thread, args=(path, options), daemon=True
-        ).start()
+        self.start_file_task(self._run_thread, path, options)
 
     def _run_thread(self, path, options):
         try:
-            self.update_status("正在初始化...", indeterminate=True)
+            self.safe_update_status("正在初始化...", indeterminate=True)
 
             def on_progress(curr, total, msg):
                 pct = (curr / total * 100) if total > 0 else 0
-                self.after(0, lambda: self.update_status(msg, pct, False))
-
-            self.config.scanner.enable_ad_scan = False
+                self.call_in_main_thread(lambda: self.update_status(msg, pct, False))
 
             renamer = Renamer(Path(path), self.config.extensions, self.image_processor)
             renamer.run(options=options, progress_callback=on_progress)
-
-            self.after(0, lambda: self.update_status("重命名完成", 100, False))
-            messagebox.showinfo("成功", "重命名完成")
+            self.call_in_main_thread(
+                lambda: self.update_status("重命名完成", 100, False)
+            )
+            self.call_in_main_thread(lambda: messagebox.showinfo("成功", "重命名完成"))
+        except RenameBatchError as e:
+            logger.error(f"重命名未全部完成: {e}", exc_info=True)
+            msg = f"{e}\n已完成 {len(e.rows)} 项，存在未完成项目。"
+            self.call_in_main_thread(
+                lambda: self.update_status("重命名部分失败", 0, False)
+            )
+            self.call_in_main_thread(lambda: messagebox.showwarning("部分失败", msg))
         except Exception as e:
             logger.error(f"重命名失败: {e}", exc_info=True)
-            self.after(0, lambda: self.update_status("失败", 0, False))
-            messagebox.showerror("错误", str(e))
+            self.safe_update_status("重命名失败", 0, False)
+            msg = str(e)
+            self.call_in_main_thread(lambda: messagebox.showerror("错误", msg))
         finally:
-            self.after(0, lambda: self.btn_start.config(state="normal"))
+            self.call_in_main_thread(lambda: self.btn_start.config(state="normal"))

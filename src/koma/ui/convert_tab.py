@@ -1,12 +1,12 @@
 import os
 import subprocess
-import threading
 import tkinter as tk
+from dataclasses import replace
 from pathlib import Path
 from tkinter import messagebox, ttk
 
 from koma.config import IMG_OUTPUT_FORMATS
-from koma.core.converter import Converter
+from koma.core.converter import Converter, Status
 from koma.core.scanner import Scanner
 from koma.ui.base_tab import BaseTab
 from koma.utils import logger
@@ -228,58 +228,83 @@ class ConvertTab(BaseTab):
         if not inp or not out:
             return messagebox.showerror("错误", "请设置路径")
 
-        # 临时更新配置对象
-        self.config.converter.format = self.format_var.get()
-        self.config.converter.quality = self.quality_var.get()
-        self.config.converter.lossless = self.lossless_var.get()
-        if self.advanced_var.get():
-            self.config.converter.custom_params = self.custom_params_var.get().strip()
-            ext = self.custom_ext_var.get().strip()
-            if ext and not ext.startswith("."):
-                ext = "." + ext
-            self.config.converter.custom_ext = ext
-        else:
-            self.config.converter.custom_params = ""
-            self.config.converter.custom_ext = ""
+        try:
+            advanced = self.advanced_var.get()
+            custom_ext = self.custom_ext_var.get().strip() if advanced else ""
+            if custom_ext and not custom_ext.startswith("."):
+                custom_ext = "." + custom_ext
+            converter_config = replace(
+                self.config.converter,
+                format=self.format_var.get(),
+                quality=self.quality_var.get(),
+                lossless=self.lossless_var.get(),
+                custom_params=(
+                    self.custom_params_var.get().strip() if advanced else ""
+                ),
+                custom_ext=custom_ext,
+            )
+            scanner_options = {
+                "enable_ad_scan": self.skip_ad_var.get(),
+                "enable_custom_ad_scan": self.custom_ad_scan_var.get(),
+                "custom_ad_dir": str(self.custom_ad_dir),
+                "enable_archive_scan": False,
+            }
+        except (tk.TclError, ValueError):
+            return messagebox.showerror("错误", "转换选项无效")
 
         self.btn_run.config(state="disabled")
-        threading.Thread(target=self._run_thread, args=(inp, out), daemon=True).start()
+        self.start_file_task(
+            self._run_thread, inp, out, converter_config, scanner_options
+        )
 
-    def _run_thread(self, inp, out):
+    def _run_thread(self, inp, out, converter_config, scanner_options):
         try:
-            self.update_status("正在扫描...", indeterminate=True)
-
+            self.safe_update_status("正在扫描...", indeterminate=True)
             converter = Converter(
-                Path(inp), Path(out), self.config.converter, self.image_processor
+                Path(inp), Path(out), converter_config, self.image_processor
             )
 
             def gen():
-                options = {
-                    "enable_ad_scan": self.skip_ad_var.get(),
-                    "enable_custom_ad_scan": self.custom_ad_scan_var.get(),
-                    "custom_ad_dir": str(self.custom_ad_dir),
-                    "enable_archive_scan": False,
-                }
                 scanner = Scanner(
                     Path(inp), self.config.extensions, self.image_processor
                 )
-                for root, res in scanner.run(options=options):
-                    if not self.skip_ad_var.get() and res.ads:
+                for root, res in scanner.run(options=scanner_options):
+                    if not scanner_options["enable_ad_scan"] and res.ads:
                         res.to_convert.extend(res.ads)
                         res.ads.clear()
                     yield root, res
 
             def cb(curr, total, msg):
                 pct = (curr / total * 100) if total else 0
-                self.after(0, lambda: self.update_status(msg, pct, False))
+                self.call_in_main_thread(lambda: self.update_status(msg, pct, False))
 
-            converter.run(gen(), progress_callback=cb)
-
-            self.after(0, lambda: self.update_status("转换完成", 100, False))
-            messagebox.showinfo("完成", f"转换完成！\n输出目录: {out}")
+            results = converter.run(gen(), progress_callback=cb)
+            errors = [result for result in results if result.status is Status.ERROR]
+            if errors:
+                failed_names = "\n".join(
+                    f"{result.file.name}: {result.error}" for result in errors[:10]
+                )
+                more = f"\n另有 {len(errors) - 10} 项未显示" if len(errors) > 10 else ""
+                msg = f"{len(errors)} 个文件转换失败：\n{failed_names}{more}"
+                self.call_in_main_thread(
+                    lambda: self.update_status(
+                        f"转换完成，{len(errors)} 项失败", 0, False
+                    )
+                )
+                self.call_in_main_thread(
+                    lambda: messagebox.showwarning("转换部分失败", msg)
+                )
+            else:
+                self.call_in_main_thread(
+                    lambda: self.update_status("转换完成", 100, False)
+                )
+                self.call_in_main_thread(
+                    lambda: messagebox.showinfo("完成", f"转换完成！\n输出目录: {out}")
+                )
         except Exception as e:
             logger.error(f"转换失败: {e}", exc_info=True)
-            self.after(0, lambda: self.update_status("转换失败", 0, False))
-            messagebox.showerror("错误", str(e))
+            self.safe_update_status("转换失败", 0, False)
+            msg = str(e)
+            self.call_in_main_thread(lambda: messagebox.showerror("错误", msg))
         finally:
-            self.after(0, lambda: self.btn_run.config(state="normal"))
+            self.call_in_main_thread(lambda: self.btn_run.config(state="normal"))

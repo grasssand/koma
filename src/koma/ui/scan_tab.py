@@ -1,6 +1,5 @@
 import os
 import subprocess
-import threading
 import tkinter as tk
 from pathlib import Path
 from tkinter import messagebox, ttk
@@ -15,7 +14,7 @@ from koma.ui.base_tab import BaseTab
 from koma.utils import logger
 
 
-class SacnTab(BaseTab):
+class ScanTab(BaseTab):
     def __init__(self, parent, config, processor, status_callback):
         super().__init__(parent, config, processor, status_callback)
 
@@ -258,6 +257,8 @@ class SacnTab(BaseTab):
         self.canvas.pack(side="left", fill="both", expand=True)
         self.grid_scrollbar.pack(side="right", fill="y")
 
+        # 用 bind_all + 回调内做区域判断：卡片是 canvas 的子控件，
+        # 指针落在卡片上时事件不会冒泡到 canvas（详见 _on_mousewheel）
         self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
 
     def _on_canvas_resize(self, event):
@@ -304,8 +305,27 @@ class SacnTab(BaseTab):
         self.grid_col = c
 
     def _on_mousewheel(self, event):
-        if self.view_mode == "grid" and self.canvas.winfo_exists():
-            self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        """
+        网格视图的滚轮处理。
+
+        这里用 bind_all 是因为指针落在卡片（canvas 的子控件）上时，
+        事件不会自动冒泡到 canvas。但必须自己做区域判断 —— 否则会劫持
+        其它 Tab 的 Treeview 和底部日志框的滚动。
+        """
+        if self.view_mode != "grid" or not self.canvas.winfo_exists():
+            return
+
+        # 仅当指针位于画布可见区域内才滚动
+        px, py = self.canvas.winfo_pointerxy()
+        cx, cy = self.canvas.winfo_rootx(), self.canvas.winfo_rooty()
+        inside = (
+            cx <= px < cx + self.canvas.winfo_width()
+            and cy <= py < cy + self.canvas.winfo_height()
+        )
+        if not inside:
+            return
+
+        self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
     def _toggle_view(self):
         """切换视图模式"""
@@ -479,7 +499,6 @@ class SacnTab(BaseTab):
             self.btn_open_custom_ad.config(state="normal")
         else:
             self.btn_open_custom_ad.config(state="disabled")
-            self.btn_open_custom_ad.config(state="disabled")
 
     def _open_custom_ad_dir(self):
         self.custom_ad_dir.mkdir(parents=True, exist_ok=True)
@@ -528,7 +547,6 @@ class SacnTab(BaseTab):
         if options["enable_archive_scan"] and not options["archive_out_path"]:
             return messagebox.showerror("提示", "启用压缩包处理时，必须设置输出路径")
 
-        # 清空数据
         for item in self.tree.get_children():
             self.tree.delete(item)
 
@@ -540,63 +558,63 @@ class SacnTab(BaseTab):
         self.grid_row = 0
         self.grid_col = 0
 
-        # 重置回列表视图
         if self.view_mode == "grid":
             self._toggle_view()
         self.btn_toggle.config(state="disabled")
-
         self.btn_scan.config(state="disabled")
-        threading.Thread(
-            target=self._run_thread, args=(path, options), daemon=True
-        ).start()
+        self.start_file_task(self._run_thread, path, options)
 
     def _run_thread(self, path, options):
         try:
-            self.update_status("正在扫描...", indeterminate=True)
-            self.config.scanner.enable_ad_scan = options["enable_ad_scan"]
+            self.safe_update_status("正在扫描...", indeterminate=True)
 
             def cb(curr, total, msg):
-                self.after(
-                    0,
+                self.call_in_main_thread(
                     lambda: self.update_status(
                         msg, (curr / total * 100) if total else 0
-                    ),
+                    )
                 )
 
             scanner = Scanner(Path(path), self.config.extensions, self.image_processor)
 
-            count_ad, count_junk, count_archive = 0, 0, 0
+            count_ad, count_junk, count_archive, failed_archives = 0, 0, 0, 0
             for _, res in scanner.run(options=options, progress_callback=cb):
-                for f in res.ads:
-                    self.after(0, lambda f=f: self._add_item("广告", f))
+                for file_path in res.ads:
+                    self.call_in_main_thread(
+                        lambda f=file_path: self._add_item("广告", f)
+                    )
                     count_ad += 1
-                for f in res.junk:
-                    self.after(0, lambda f=f: self._add_item("杂项", f))
+                for file_path in res.junk:
+                    self.call_in_main_thread(
+                        lambda f=file_path: self._add_item("杂项", f)
+                    )
                     count_junk += 1
 
                 count_archive += res.processed_archives
+                failed_archives += res.failed_archives
 
             msg = f"扫描完成: 发现 {count_ad} 个广告, {count_junk} 个杂项"
             if count_archive > 0:
                 msg += f"，已处理 {count_archive} 个压缩包"
-
-            self.after(0, lambda: self.update_status(msg, 100, False))
+            if failed_archives:
+                msg += f"，{failed_archives} 个压缩包处理失败"
+                self.call_in_main_thread(
+                    lambda: messagebox.showwarning("扫描完成", msg)
+                )
+            self.call_in_main_thread(lambda: self.update_status(msg, 100, False))
 
         except Exception as e:
-            logger.error(f"扫描出错: {e}")
-            self.update_status("扫描出错")
+            logger.error(f"扫描出错: {e}", exc_info=True)
+            self.safe_update_status("扫描出错", 0, False)
         finally:
 
             def on_scan_finished():
                 self.btn_scan.config(state="normal")
+                self.btn_toggle.config(
+                    state="normal" if self.scanned_items else "disabled"
+                )
 
-                # 只有扫描到了结果，才允许切换视图
-                if self.scanned_items:
-                    self.btn_toggle.config(state="normal")
-                else:
-                    self.btn_toggle.config(state="disabled")
-
-            self.after(0, on_scan_finished)
+            self.call_in_main_thread(on_scan_finished)
 
     def _add_item(self, type_str, path):
         self.tree.insert(
@@ -663,7 +681,7 @@ class SacnTab(BaseTab):
                         item["selected"] = False
 
     def _delete_selected(self):
-        """删除选中项"""
+        """将选中项移至回收站。"""
         paths_to_remove = set()
 
         if self.view_mode == "list":
@@ -672,68 +690,65 @@ class SacnTab(BaseTab):
                 return
             if not messagebox.askyesno("确认", f"删除选中的 {len(items)} 个文件？"):
                 return
-
             for item_id in items:
-                path_str = self.tree.item(item_id, "values")[4]
-                paths_to_remove.add(path_str)
+                paths_to_remove.add(self.tree.item(item_id, "values")[4])
         else:
-            selected = [x for x in self.scanned_items if x["selected"]]
+            selected = [item for item in self.scanned_items if item["selected"]]
             if not selected:
                 return
             if not messagebox.askyesno("确认", f"删除选中的 {len(selected)} 个文件？"):
                 return
-
             for item in selected:
                 paths_to_remove.add(str(item["path"]))
 
+        self.btn_delete.config(state="disabled")
+        self.start_file_task(self._delete_paths, paths_to_remove)
+
+    def _delete_paths(self, paths_to_remove):
         deleted_paths = set()
+        failed = 0
         for path_str in paths_to_remove:
             try:
                 send2trash(path_str)
                 deleted_paths.add(path_str)
             except Exception as e:
-                logger.error(f"删除失败: {e}")
+                failed += 1
+                logger.error(f"删除失败: {e}", exc_info=True)
 
-        if not deleted_paths:
-            return
+        self.call_in_main_thread(
+            lambda: self._apply_deleted_paths(deleted_paths, failed)
+        )
 
-        tree_items_to_delete = []
-        for item_id in self.tree.get_children():
-            p_str = self.tree.item(item_id, "values")[4]
-            if p_str in deleted_paths:
-                tree_items_to_delete.append(item_id)
+    def _apply_deleted_paths(self, deleted_paths, failed):
+        if deleted_paths:
+            for item_id in self.tree.get_children():
+                if self.tree.item(item_id, "values")[4] in deleted_paths:
+                    self.tree.delete(item_id)
 
-        for item_id in tree_items_to_delete:
-            self.tree.delete(item_id)
+            new_scanned_items = []
+            deleted_widget_count = 0
+            for item in self.scanned_items:
+                if str(item["path"]) in deleted_paths:
+                    widget = item.get("widget")
+                    if widget:
+                        try:
+                            if widget.winfo_exists():
+                                widget.destroy()
+                                deleted_widget_count += 1
+                        except tk.TclError:
+                            pass
+                else:
+                    new_scanned_items.append(item)
 
-        new_scanned_items = []
-        deleted_widget_count = 0
+            self.scanned_items = new_scanned_items
+            self.loaded_count = max(0, self.loaded_count - deleted_widget_count)
+            self._reflow_grid()
 
-        for item in self.scanned_items:
-            if str(item["path"]) in deleted_paths:
-                if item.get("widget"):
-                    try:
-                        if item["widget"].winfo_exists():
-                            item["widget"].destroy()
-                            deleted_widget_count += 1
-                    except Exception:
-                        pass
-            else:
-                new_scanned_items.append(item)
-
-        self.scanned_items = new_scanned_items
-        self.loaded_count = max(0, self.loaded_count - deleted_widget_count)
-
-        self._reflow_grid()
-
-    def _refresh_grid_view(self):
-        """删除后强制刷新网格"""
-        for widget in self.scrollable_frame.winfo_children():
-            widget.destroy()
-        self.grid_row = 0
-        self.grid_col = 0
-        self.loaded_count = 0
-        self._render_next_batch()
+        if failed:
+            messagebox.showwarning(
+                "删除完成", f"{failed} 个项目移至回收站失败，请查看日志。"
+            )
+        self.btn_delete.config(state="normal")
 
     def _sort_tree(self, col, reverse):
         """对结果列表进行自然排序"""

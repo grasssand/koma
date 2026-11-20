@@ -1,4 +1,3 @@
-import threading
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -251,37 +250,41 @@ class BinderTab(BaseTab):
         if not out:
             return messagebox.showerror("错误", "请设置输出路径")
 
+        try:
+            options = {
+                "prefix": self.filename_prefix_var.get(),
+                "start_index": self.filename_start_index_var.get(),
+            }
+        except (tk.TclError, ValueError):
+            return messagebox.showerror("错误", "起始编号必须是非负整数")
+        if options["start_index"] < 0:
+            return messagebox.showerror("错误", "起始编号不能为负数")
+
         inputs = [Path(self.tree.item(i)["values"][1]) for i in items]
-
         self.btn_run.config(state="disabled")
-
-        options = {
-            "prefix": self.filename_prefix_var.get(),
-            "start_index": self.filename_start_index_var.get(),
-        }
-        threading.Thread(
-            target=self._run_thread, args=(inputs, out, options), daemon=True
-        ).start()
+        self.start_file_task(self._run_thread, inputs, out, options)
 
     def _run_thread(self, inputs, out, options):
         try:
-            self.update_status("正在初始化...", 0)
+            self.safe_update_status("正在初始化...", 0)
             archive_handler = ArchiveHandler(self.config.extensions)
             binder = Binder(Path(out), self.config.extensions, archive_handler)
 
             def cb(c, t, m):
                 val = (c / t * 100) if t and t > 0 else 0
-                self.after(0, lambda: self.update_status(m, val))
+                self.call_in_main_thread(lambda: self.update_status(m, val))
 
             binder.run(inputs, options, progress_callback=cb)
 
-            self.after(0, lambda: self.update_status("装订完成", 100))
-            messagebox.showinfo("成功", "装订完成")
+            self.call_in_main_thread(lambda: self.update_status("装订完成", 100, False))
+            self.call_in_main_thread(lambda: messagebox.showinfo("成功", "装订完成"))
         except Exception as e:
             msg = str(e)
             logger.error(f"装订错误: {msg}", exc_info=True)
-            self.after(0, lambda: self.update_status(f"失败: {msg}", 0))
-            messagebox.showerror("错误", msg)
+            self.call_in_main_thread(
+                lambda: self.update_status(f"装订失败: {msg}", 0, False)
+            )
+            self.call_in_main_thread(lambda: messagebox.showerror("错误", msg))
         finally:
-            self.after(0, lambda: self.btn_run.config(state="normal"))
-            self.after(0, lambda: self.update_status("", None, False))
+            self.call_in_main_thread(lambda: self.btn_run.config(state="normal"))
+            self.call_in_main_thread(lambda: self.update_status("", None, False))
