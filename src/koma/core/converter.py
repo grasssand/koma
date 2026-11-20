@@ -5,6 +5,7 @@ import os
 import shutil
 import subprocess
 import time
+import uuid
 from collections.abc import Callable, Generator
 from dataclasses import dataclass
 from enum import Enum
@@ -12,6 +13,7 @@ from pathlib import Path
 
 from koma.config import ConverterConfig
 from koma.core.command_generator import CommandGenerator
+from koma.core.file_safety import atomic_output, validate_prefix
 from koma.core.image_processor import ImageProcessor
 from koma.core.scanner import ScanResult
 
@@ -122,48 +124,131 @@ class Converter:
             self.startupinfo = subprocess.STARTUPINFO()
             self.startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
 
+    def _target_path(self, file_path: Path, *, convert: bool) -> Path:
+        """为输入生成单层输出路径，并校验自定义扩展名边界。"""
+        try:
+            rel_path = file_path.relative_to(self.input_dir)
+        except ValueError as e:
+            raise ValueError(f"输入文件不在输入目录中: {file_path}") from e
+
+        target_folder = self.output_dir / rel_path.parent
+        if not convert:
+            return target_folder / rel_path.name
+
+        extension = self.cmd_gen.get_ext()
+        if (
+            not isinstance(extension, str)
+            or not extension.startswith(".")
+            or len(extension) < 2
+            or extension[-1] in ". "
+            or any(char in extension for char in "/\\")
+        ):
+            raise ValueError(f"无效的输出扩展名: {extension!r}")
+
+        target_name = f"{file_path.stem}{extension}"
+        try:
+            validate_prefix(target_name)
+        except ValueError as e:
+            raise ValueError(f"无效的输出文件名: {target_name!r}") from e
+        return target_folder / target_name
+
+    @staticmethod
+    def _path_key(path: Path) -> str:
+        """规范化路径，涵盖符号链接及 Windows 大小写别名。"""
+        return os.path.normcase(str(path.resolve(strict=False)))
+
+    def _validate_output_root(self) -> None:
+        input_root = self.input_dir.resolve(strict=False)
+        output_root = self.output_dir.resolve(strict=False)
+        input_key = self._path_key(input_root)
+        if input_key == self._path_key(output_root) or input_key in {
+            self._path_key(parent) for parent in output_root.parents
+        }:
+            raise ValueError("输出目录不能位于输入目录内")
+
+    def _plan_tasks(
+        self,
+        scanner_generator: Generator[tuple[Path, ScanResult], None, None],
+        progress_callback: Callable[[int, int, str], None] | None = None,
+    ) -> list[tuple[Callable[[Path], ConversionResult], Path]]:
+        plan: list[tuple[Callable[[Path], ConversionResult], Path]] = []
+        for root, result in scanner_generator:
+            if progress_callback:
+                progress_callback(0, 0, f"正在分析目录: {root.name}")
+            plan.extend((self._copy_worker, p) for p in result.to_copy)
+            plan.extend((self._convert_worker, p) for p in result.to_convert)
+
+        source_keys = {self._path_key(path) for _, path in plan}
+        target_keys: dict[str, Path] = {}
+        for worker, path in plan:
+            target = self._target_path(path, convert=worker == self._convert_worker)
+            key = self._path_key(target)
+            if key in source_keys:
+                raise ValueError(f"输出目标与输入文件冲突: {target}")
+            if key in target_keys:
+                raise ValueError(
+                    f"多个输入映射到同一输出文件: {target_keys[key]} 和 {path}"
+                )
+            target_keys[key] = path
+        return plan
+
     def run(
         self,
         scanner_generator: Generator[tuple[Path, ScanResult], None, None],
         progress_callback: Callable[[int, int, str], None] | None = None,
-    ):
+    ) -> list[ConversionResult]:
         workers = self.config.actual_workers
         logger.info(f"🚀 转换器启动 (并发: {workers})")
 
-        all_results = []
+        all_results: list[ConversionResult] = []
         global_start = time.monotonic()
-        tasks = []
+
+        # 在途任务上限：否则几万张图会同时产生同样数量的 Future 与排队任务
+        window = max(workers * 4, 16)
 
         try:
+            self._validate_output_root()
+            # 完整扫描并预检所有输出，发现别名/碰撞时不启动任何写任务。
+            plan = self._plan_tasks(scanner_generator, progress_callback)
+            total_tasks = len(plan)
+
+            # 阶段 2：有界提交，边跑边回收
             with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
-                for root, result in scanner_generator:
-                    if progress_callback:
-                        progress_callback(0, 0, f"正在分析目录: {root.name}")
+                pending: set[concurrent.futures.Future] = set()
 
-                    for p in result.to_copy:
-                        tasks.append(executor.submit(self._copy_worker, p))
-                    for p in result.to_convert:
-                        tasks.append(executor.submit(self._convert_worker, p))
+                def drain_one() -> None:
+                    """阻塞到至少有一个任务完成，并回收其结果"""
+                    if not pending:
+                        return
 
-                total_tasks = len(tasks)
+                    done, _ = concurrent.futures.wait(
+                        pending, return_when=concurrent.futures.FIRST_COMPLETED
+                    )
+                    for future in done:
+                        pending.discard(future)
+                        res = future.result()
+                        all_results.append(res)
 
-                for completed, future in enumerate(
-                    concurrent.futures.as_completed(tasks), start=1
-                ):
-                    res = future.result()
-                    all_results.append(res)
+                        if progress_callback:
+                            progress_callback(
+                                len(all_results),
+                                total_tasks,
+                                f"处理中 ({len(all_results)}/{total_tasks}): {res.file}",
+                            )
 
-                    if progress_callback:
-                        progress_callback(
-                            completed,
-                            total_tasks,
-                            f"处理中 ({completed}/{total_tasks}): {res.file}",
-                        )
+                for worker, path in plan:
+                    pending.add(executor.submit(worker, path))
+                    while len(pending) >= window:
+                        drain_one()
+
+                while pending:
+                    drain_one()
         finally:
             if progress_callback:
                 progress_callback(1, 1, "任务全部完成")
 
         self._generate_report(all_results, global_start)
+        return all_results
 
     def _log_result(self, res: ConversionResult):
         if res.status == Status.ERROR:
@@ -185,40 +270,40 @@ class Converter:
                 res.error = ""
                 res.in_size = file_path.stat().st_size
 
-                # 计算相对路径，保持目录结构
-                rel_path = file_path.relative_to(self.input_dir)
-                target_folder = self.output_dir / rel_path.parent
-                target_folder.mkdir(parents=True, exist_ok=True)
-
-                # 生成目标文件名
-                target_file = target_folder / (file_path.stem + self.cmd_gen.get_ext())
+                target_file = self._target_path(file_path, convert=True)
 
                 # 使用 ImageProcessor 分析图片属性 (动图/灰度)
                 img_info = self.image_processor.analyze(file_path)
 
-                # 生成 FFmpeg 命令行
-                cmd = self.cmd_gen.generate(
-                    file_path, target_file, img_info.is_animated, img_info.is_grayscale
-                )
-
-                subprocess.run(
-                    cmd,
-                    check=True,
-                    capture_output=True,
-                    startupinfo=self.startupinfo,
-                )
-
-                if target_file.exists():
-                    res.out_size = target_file.stat().st_size
-                    # 如果转换后体积反而变大，标记为 BIGGER
-                    res.status = (
-                        Status.BIGGER if res.out_size > res.in_size else Status.SUCCESS
+                # 转换到暂存文件，失败时不影响已有结果。
+                with atomic_output(target_file) as staged_file:
+                    cmd = self.cmd_gen.generate(
+                        file_path,
+                        staged_file,
+                        img_info.is_animated,
+                        img_info.is_grayscale,
                     )
-                    self._log_result(res)
-                    return res
 
-                else:
-                    raise FileNotFoundError("输出文件未生成")
+                    subprocess.run(
+                        cmd,
+                        check=True,
+                        capture_output=True,
+                        startupinfo=self.startupinfo,
+                    )
+
+                    if not staged_file.is_file():
+                        raise FileNotFoundError("输出文件未生成")
+                    out_size = staged_file.stat().st_size
+                    if out_size == 0:
+                        raise ValueError("转换输出为空")
+                    res.out_size = out_size
+
+                # 如果转换后体积反而变大，标记为 BIGGER
+                res.status = (
+                    Status.BIGGER if res.out_size > res.in_size else Status.SUCCESS
+                )
+                self._log_result(res)
+                return res
 
             except Exception as e:
                 res.error = str(e)
@@ -244,13 +329,13 @@ class Converter:
                     raise FileNotFoundError("源文件缺失")
 
                 res.in_size = file_path.stat().st_size
-                rel_path = file_path.relative_to(self.input_dir)
-                target_path = self.output_dir / rel_path
-                target_path.parent.mkdir(parents=True, exist_ok=True)
+                target_path = self._target_path(file_path, convert=False)
+                with atomic_output(target_path) as staged_path:
+                    shutil.copy2(file_path, staged_path)
+                    if not staged_path.is_file():
+                        raise FileNotFoundError("复制后文件未生成")
+                    res.out_size = staged_path.stat().st_size
 
-                shutil.copy2(file_path, target_path)
-
-                res.out_size = target_path.stat().st_size
                 res.status = Status.COPY
                 self._log_result(res)
 
@@ -275,15 +360,17 @@ class Converter:
 
         total_in = 0
         total_out = 0
+        failed_in = 0
         csv_rows = []
         failures = []
 
         for r in results:
-            total_in += r.in_size
-            total_out += r.out_size
-
-            if r.error:
+            if r.status == Status.ERROR:
                 failures.append(r)
+                failed_in += r.in_size
+            else:
+                total_in += r.in_size
+                total_out += r.out_size
 
             csv_rows.append(
                 [
@@ -307,6 +394,8 @@ class Converter:
         logger.info(f"⏱️ 总耗时: {total_time:.1f}s")
         logger.info(f"📈 总原体积: {format_size(total_in)}")
         logger.info(f"📉 总新体积: {format_size(total_out)}")
+        if failed_in:
+            logger.info(f"🚫 未处理体积: {format_size(failed_in)}")
         if saved_size >= 0:
             logger.info(f"♻️ 节省空间: {format_size(saved_size)} (-{saved_ratio:.1f}%)")
         else:
@@ -325,10 +414,14 @@ class Converter:
                     break
                 logger.warning(f"❌ [{i}] {f.file}: {f.error}")
 
-        csv_path = self.output_dir / f"convert_report_{int(time.time())}.csv"
+        csv_path = self.output_dir / (
+            f"convert_report_{int(time.time())}_{uuid.uuid4().hex[:8]}.csv"
+        )
         try:
-            self.output_dir.mkdir(parents=True, exist_ok=True)
-            with open(csv_path, mode="w", encoding="utf-8-sig", newline="") as f:
+            with (
+                atomic_output(csv_path) as staged_report,
+                open(staged_report, mode="w", encoding="utf-8-sig", newline="") as f,
+            ):
                 writer = csv.writer(f)
                 writer.writerow(["文件名", "原大小", "新大小", "比例%", "状态", "错误"])
                 writer.writerows(csv_rows)

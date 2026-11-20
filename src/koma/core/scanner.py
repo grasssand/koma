@@ -1,6 +1,7 @@
 import logging
 import shutil
 import tempfile
+import uuid
 from collections.abc import Callable, Generator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -11,6 +12,7 @@ from PIL import Image
 
 from koma.config import ExtensionsConfig
 from koma.core.archive import ArchiveHandler
+from koma.core.file_safety import move_no_replace
 from koma.core.image_processor import ImageProcessor
 
 logger = logging.getLogger(__name__)
@@ -24,6 +26,7 @@ class ScanResult:
     junk: list[Path] = field(default_factory=list)
     archives: list[Path] = field(default_factory=list)
     processed_archives: int = 0
+    failed_archives: int = 0
 
 
 class Scanner:
@@ -63,6 +66,10 @@ class Scanner:
         enable_archive_scan = options.get("enable_archive_scan", False)
         out_dir_str = options.get("archive_out_path")
         exclude_path = Path(out_dir_str).resolve() if out_dir_str else None
+        if enable_archive_scan and exclude_path:
+            source = self.input_dir.resolve()
+            if source == exclude_path or source.is_relative_to(exclude_path):
+                raise ValueError("压缩包输出目录不能是输入目录或其上级目录")
 
         if enable_ad_scan and enable_custom_ad_scan:
             self.custom_ad_hashes = self._load_custom_ads(custom_ad_dir)
@@ -82,11 +89,22 @@ class Scanner:
                     except ValueError:
                         pass
 
-                # 排除隐藏文件夹
-                dirs[:] = [d for d in dirs if not d.startswith(".")]
-
                 root_path = Path(root)
                 result = ScanResult()
+
+                # 排除隐藏文件夹
+                keep_dirs = []
+                for d in dirs:
+                    if d.startswith("."):
+                        continue
+                    if d.lower() in self.ext_config.system_junk:
+                        junk_dir = root_path / d
+                        logger.info(f"⚠️ 发现系统垃圾目录: {junk_dir}")
+                        result.junk.append(junk_dir)
+                        continue
+                    keep_dirs.append(d)
+                dirs[:] = keep_dirs
+
                 files = natsorted(files)
 
                 image_candidates = []
@@ -98,10 +116,12 @@ class Scanner:
                     if self._is_archive(f_path):
                         result.archives.append(f_path)
 
-                        if enable_archive_scan and self._process_archive(
-                            f_path, options
-                        ):
-                            result.processed_archives += 1
+                        if enable_archive_scan:
+                            outcome = self._process_archive(f_path, options)
+                            if outcome is True:
+                                result.processed_archives += 1
+                            elif outcome is None:
+                                result.failed_archives += 1
 
                         continue
 
@@ -142,11 +162,11 @@ class Scanner:
             if progress_callback:
                 progress_callback(1, 1, "扫描分析完成")
 
-    def _process_archive(self, archive_path: Path, options: dict) -> bool:
-        """处理单个压缩包：检查空间 -> 解压 -> 清理 -> 重打包"""
+    def _process_archive(self, archive_path: Path, options: dict) -> bool | None:
+        """返回 True（成功）、False（无需清理）或 None（失败）。"""
         output_dir = options.get("archive_out_path")
         if not output_dir:
-            return False
+            return None
 
         try:
             required_space = archive_path.stat().st_size * 2.5
@@ -158,7 +178,7 @@ class Scanner:
                     f"❌ 跳过压缩包 {archive_path.name}: 磁盘空间不足 "
                     f"(需要 {required_space / 1024 / 1024:.1f}MB, 剩余 {free_space / 1024 / 1024:.1f}MB)"
                 )
-                return False
+                return None
         except Exception:
             pass
 
@@ -181,30 +201,54 @@ class Scanner:
 
                 logger.info(f"🚫 发现杂项或广告: {archive_path.name}")
 
-                # 重打包 或 复制
-                dest_base = Path(output_dir) / archive_path.stem
-
+                # 按输入相对目录输出，同名结果只创建新名字，不合并旧目录。
+                relative_parent = archive_path.parent.resolve().relative_to(
+                    self.input_dir.resolve()
+                )
+                dest_parent = Path(output_dir).resolve() / relative_parent
+                dest_parent.mkdir(parents=True, exist_ok=True)
                 if options.get("repack", True):
                     fmt = options.get("pack_format", "zip")
-                    final_path = dest_base.with_suffix(f".{fmt}")
-
-                    self.archive_handler.pack(
-                        content_root, final_path, fmt=fmt, level="normal"
-                    )
-                    logger.info(
-                        f"📦 已重打包 (清理 {deleted_count} 个文件): {archive_path.name} -> {final_path}"
-                    )
+                    if fmt not in {"zip", "cbz", "7z", "cb7"}:
+                        raise ValueError("不支持的压缩包输出格式")
+                    name = f"{archive_path.stem}.{fmt}"
                 else:
-                    if not dest_base.exists():
-                        shutil.move(str(content_root), str(dest_base))
-                        logger.info(
-                            f"✅ 已移动 (清理 {deleted_count} 个文件): {archive_path.name} -> {dest_base}"
-                        )
+                    name = archive_path.stem
+
+                with tempfile.TemporaryDirectory(
+                    prefix=".koma-", dir=dest_parent
+                ) as staging_dir:
+                    staged = Path(staging_dir) / name
+                    if options.get("repack", True):
+                        if not self.archive_handler.pack(
+                            content_root, staged, fmt=fmt, level="normal"
+                        ):
+                            raise RuntimeError("压缩包重打包失败")
+                        if not staged.is_file() or staged.stat().st_size == 0:
+                            raise RuntimeError("压缩包输出为空")
                     else:
-                        shutil.copytree(content_root, dest_base, dirs_exist_ok=True)
-                        logger.info(
-                            f"✅ 已合并 (清理 {deleted_count} 个文件): {archive_path.name} -> {dest_base}"
-                        )
+                        shutil.copytree(content_root, staged)
+
+                    final_path = dest_parent / name
+                    while True:
+                        try:
+                            if options.get("repack", True):
+                                move_no_replace(staged, final_path)
+                            else:
+                                if final_path.exists() or final_path.is_symlink():
+                                    raise FileExistsError(str(final_path))
+                                staged.rename(final_path)
+                            break
+                        except FileExistsError:
+                            suffix = f"_{uuid.uuid4().hex}"
+                            final_path = dest_parent / (
+                                f"{archive_path.stem}{suffix}.{fmt}"
+                                if options.get("repack", True)
+                                else f"{archive_path.stem}{suffix}"
+                            )
+                logger.info(
+                    f"✅ 已清理 {deleted_count} 个文件: {archive_path.name} -> {final_path}"
+                )
 
                 return True
 
@@ -213,11 +257,11 @@ class Scanner:
                 logger.critical(f"⛔ 处理 {archive_path.name} 时磁盘空间耗尽！")
             else:
                 logger.error(f"处理压缩包IO错误 {archive_path}: {e}")
-            return False
+            return None
 
         except Exception as e:
             logger.error(f"处理压缩包失败 {archive_path}: {e}")
-            return False
+            return None
 
     def _clean_directory_recursive(
         self, target_dir: Path, enable_ad_scan: bool, enable_custom_ad_scan: bool
@@ -225,9 +269,17 @@ class Scanner:
         """递归清理临时目录中的垃圾和广告"""
         deleted_count = 0
 
-        for root, _, files in target_dir.walk():
+        def fail_walk(error: OSError) -> None:
+            raise error
+
+        for root, dirs, files in target_dir.walk(on_error=fail_walk):
             root_path = Path(root)
             files = natsorted(files)
+            for name in list(dirs):
+                if name.lower() in self.ext_config.system_junk:
+                    shutil.rmtree(root_path / name)
+                    dirs.remove(name)
+                    deleted_count += 1
 
             image_candidates = []
 
@@ -235,12 +287,9 @@ class Scanner:
             for f in files:
                 f_path = root_path / f
                 if self._is_junk(f_path):
-                    try:
-                        f_path.unlink()
-                        deleted_count += 1
-                        logger.debug(f"[TempClean] 删除杂项: {f}")
-                    except OSError:
-                        pass
+                    f_path.unlink()
+                    deleted_count += 1
+                    logger.debug(f"[TempClean] 删除杂项: {f}")
                 elif f_path.suffix.lower() in self.supported_img:
                     image_candidates.append(f)
 
@@ -250,29 +299,29 @@ class Scanner:
                     root_path, image_candidates, enable_custom_ad_scan
                 )
                 for ad in ads:
-                    try:
-                        (root_path / ad).unlink()
-                        deleted_count += 1
-                        logger.debug(f"[TempClean] 删除广告: {ad}")
-                    except OSError:
-                        pass
+                    (root_path / ad).unlink()
+                    deleted_count += 1
+                    logger.debug(f"[TempClean] 删除广告: {ad}")
 
         return deleted_count
 
     def _is_junk(self, path: Path) -> bool:
         """判断是否为杂项文件"""
         name = path.name
-        suffix = path.suffix.lower()
 
         # 隐藏文件
         if name.startswith("."):
+            return True
+
+        # 系统垃圾文件：显式配置优先，即使扩展名在支持列表里也一律视为垃圾
+        if name.lower() in self.ext_config.system_junk:
             return True
 
         # 白名单文件
         if name.lower() in self.ext_config.misc_whitelist:
             return False
 
-        return suffix not in self.valid_extensions
+        return path.suffix.lower() not in self.valid_extensions
 
     def _is_archive(self, path: Path) -> bool:
         return path.suffix.lower() in self.ext_config.archive
@@ -284,7 +333,7 @@ class Scanner:
         confirmed = set()
 
         # 倒序检查最后几张图
-        for i in range(len(images) - 1, 0, -1):
+        for i in range(len(images) - 1, -1, -1):
             img_name = images[i]
             img_path = root / img_name
             try:
@@ -346,7 +395,7 @@ class Scanner:
         try:
             with Image.open(img_path) as img:
                 img = img.convert("L").resize((9, 8), Image.Resampling.LANCZOS)
-                pixels = list(img.getdata())
+                pixels = list(img.tobytes())
                 mean_brightness = sum(pixels) / len(pixels)
 
                 diff = []

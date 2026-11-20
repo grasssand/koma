@@ -2,10 +2,13 @@ import io
 import logging
 import os
 import shutil
+import stat
 import subprocess
 import sys
+import tempfile
 import zipfile
-from pathlib import Path
+from collections.abc import Iterator
+from pathlib import Path, PurePosixPath
 from typing import Literal
 
 from natsort import natsorted
@@ -60,34 +63,38 @@ class ArchiveHandler:
         return zipfile.ZIP_STORED if is_store else zipfile.ZIP_DEFLATED
 
     def extract(self, archive_path: Path, output_root: Path) -> Path:
-        """解压归档文件，返回内容根目录"""
-        container_dir = output_root / archive_path.stem
-        container_dir.mkdir(parents=True, exist_ok=True)
-
-        success = False
+        """每次在独占工作区解压，保留归档和内层目录的逻辑名称。"""
+        if any(self._is_link(p) for p in (output_root, *output_root.parents)):
+            raise RuntimeError("解压工作区不能是链接目录")
+        output_root.mkdir(parents=True, exist_ok=True)
+        workspace = Path(tempfile.mkdtemp(prefix="koma_extract_", dir=output_root))
+        container_dir = workspace / archive_path.stem
         try:
-            if self.seven_zip:
-                success = self._extract_7z(archive_path, container_dir)
-            elif archive_path.suffix.lower() in [".zip", ".cbz"]:
+            if archive_path.stem in {"", ".", ".."}:
+                raise ValueError("无效的归档名称")
+            container_dir.mkdir()
+            if archive_path.suffix.lower() in {".zip", ".cbz"}:
                 success = self._extract_zipfile(archive_path, container_dir)
+            elif self.seven_zip:
+                success = self._extract_7z(archive_path, container_dir)
             else:
-                logger.error(f"无法处理格式 {archive_path.suffix} (未找到 7-Zip)")
+                success = False
+            if not success:
+                raise RuntimeError(f"解压失败: {archive_path.name}")
+            # 不跟随链接，也不允许提取结果逃离独占工作区。
+            for _ in self._iter_files(container_dir):
+                pass
+            items = [
+                x
+                for x in container_dir.iterdir()
+                if x.name.lower() not in self.config.system_junk
+            ]
+            if len(items) == 1 and not self._is_link(items[0]) and items[0].is_dir():
+                return items[0]
+            return container_dir
         except Exception as e:
-            logger.error(f"解压异常 {archive_path.name}: {e}")
-
-        if not success:
-            raise RuntimeError(f"解压失败: {archive_path.name}")
-
-        # 智能去嵌套：如果解压后只有一个文件夹，则返回该文件夹
-        items = [
-            x
-            for x in container_dir.iterdir()
-            if x.name.lower() not in self.config.system_junk
-        ]
-        if len(items) == 1 and items[0].is_dir():
-            return items[0]
-
-        return container_dir
+            shutil.rmtree(workspace)
+            raise RuntimeError(f"解压失败: {archive_path.name}: {e}") from e
 
     def pack(
         self,
@@ -192,13 +199,90 @@ class ArchiveHandler:
         return None
 
     def _extract_7z(self, archive_path: Path, output_dir: Path) -> bool:
-        cmd = [self.seven_zip, "x", str(archive_path), f"-o{output_dir}", "-y", "-aoa"]
+        # 先检查目录清单；拒绝链接条目，避免提取时通过链接写出工作区。
+        result = subprocess.run(
+            [
+                self.seven_zip,
+                "l",
+                "-slt",
+                "-ba",
+                "-sccUTF-8",
+                str(archive_path.resolve()),
+            ],
+            check=True,
+            capture_output=True,
+            creationflags=self._get_creation_flags(),
+        )
+        listing = result.stdout.decode("utf-8", errors="strict").replace("\r\n", "\n")
+        for block in listing.split("\n\n"):
+            fields = dict(
+                line.split(" = ", 1) for line in block.splitlines() if " = " in line
+            )
+            name = fields.get("Path")
+            if name is None:
+                continue
+            if (
+                not self._is_safe_member(output_dir.resolve(), name.replace("\\", "/"))
+                or "Symbolic Link" in fields
+                or "Hard Link" in fields
+                or "Reparse Point" in fields
+                or "l" in fields.get("Attributes", "")
+                or "L" in fields.get("Attributes", "")
+                or fields.get("Mode", "").startswith("l")
+            ):
+                raise ValueError("压缩包含越界路径或链接")
+        cmd = [
+            self.seven_zip,
+            "x",
+            str(archive_path.resolve()),
+            f"-o{output_dir.resolve()}",
+            "-y",
+            "-aoa",
+        ]
         return self._run_subprocess(cmd)
+
+    @staticmethod
+    def _is_safe_member(base: Path, name: str) -> bool:
+        """
+        校验压缩包成员名不会写到解压目录之外（zip-slip）。
+
+        zip 成员名一律用 "/" 分隔，因此按 POSIX 语义解析：
+        拒绝绝对路径、上跳的 ".."、以及带盘符的写法（Windows 上
+        `base / "C:/x"` 会直接跳出 base）。
+        """
+        if "\\" in name or "\x00" in name or ":" in name:
+            return False
+        member = PurePosixPath(name)
+
+        if member.is_absolute() or ".." in member.parts:
+            return False
+        if ":" in name.split("/")[0]:
+            return False
+
+        try:
+            target = (base / Path(*member.parts)).resolve()
+        except (OSError, ValueError):
+            return False
+
+        return target == base or base in target.parents
 
     def _extract_zipfile(self, archive_path: Path, output_dir: Path) -> bool:
         try:
+            base = output_dir.resolve()
             with zipfile.ZipFile(archive_path, "r") as zf:
-                zf.extractall(output_dir)
+                unsafe = [
+                    info.filename
+                    for info in zf.infolist()
+                    if not self._is_safe_member(base, info.filename)
+                    or stat.S_ISLNK(info.external_attr >> 16)
+                ]
+                if unsafe:
+                    logger.error(
+                        f"⛔ 压缩包 {archive_path.name} 含越界路径，已拒绝解压: "
+                        f"{unsafe[:3]}"
+                    )
+                    return False
+                zf.extractall(base)
             return True
         except Exception as e:
             logger.error(f"Zipfile error: {e}")
@@ -207,6 +291,13 @@ class ArchiveHandler:
     def _pack_7z(
         self, source_dir: Path, output_path: Path, fmt: str, mx_level: int
     ) -> bool:
+        output_path = output_path.resolve()
+        try:
+            for _ in self._iter_files(source_dir):
+                pass
+        except OSError as e:
+            logger.error(f"无法完整读取打包目录: {e}")
+            return False
         output_path.parent.mkdir(parents=True, exist_ok=True)
         exclude_args = [f"-xr!{name}" for name in self.config.system_junk]
 
@@ -230,17 +321,38 @@ class ArchiveHandler:
         try:
             output_path.parent.mkdir(parents=True, exist_ok=True)
             with zipfile.ZipFile(output_path, "w", zip_method) as zf:
-                for root, _, files in source_dir.walk():
-                    for file in files:
-                        if file.lower() in self.config.system_junk:
-                            continue
-                        file_path = Path(root) / file
-                        arcname = file_path.relative_to(source_dir)
-                        zf.write(file_path, arcname)
+                for file_path in self._iter_files(source_dir):
+                    if any(
+                        part.lower() in self.config.system_junk
+                        for part in file_path.relative_to(source_dir).parts
+                    ):
+                        continue
+                    zf.write(file_path, file_path.relative_to(source_dir))
             return True
         except Exception as e:
             logger.error(f"Zip pack error: {e}")
             return False
+
+    @staticmethod
+    def _is_link(path: Path) -> bool:
+        return path.is_symlink() or path.is_junction()
+
+    def _iter_files(self, source_dir: Path) -> Iterator[Path]:
+        """完整遍历目录；读取失败或遇到链接时终止，不能静默打出残缺归档。"""
+
+        def fail(error: OSError) -> None:
+            raise error
+
+        if self._is_link(source_dir):
+            raise OSError(f"不允许链接目录: {source_dir}")
+        base = source_dir.resolve(strict=True)
+        for root, dirs, files in source_dir.walk(on_error=fail):
+            for name in dirs + files:
+                entry = root / name
+                if self._is_link(entry) or not entry.resolve().is_relative_to(base):
+                    raise OSError(f"目录含链接或越界路径: {entry}")
+            for name in files:
+                yield root / name
 
     def _run_subprocess(self, cmd, cwd=None) -> bool:
         try:

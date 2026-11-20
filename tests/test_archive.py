@@ -1,5 +1,6 @@
 import shutil
 import zipfile
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -42,20 +43,16 @@ def test_extract_smart_folder_nested(tmp_path, handler_no_7z):
     archive_path = tmp_path / "comic.zip"
     temp_root = tmp_path / "temp"
 
-    container = temp_root / "comic"
-    inner = container / "InnerFolder"
-    inner.mkdir(parents=True)
-    (inner / "01.jpg").touch()
+    with zipfile.ZipFile(archive_path, "w") as zf:
+        zf.writestr("InnerFolder/01.jpg", b"image")
+        zf.writestr("__MACOSX/info", b"junk")
+        zf.writestr("Thumbs.db", b"junk")
 
-    # 模拟垃圾文件
-    (container / "__MACOSX").mkdir()
-    (container / "Thumbs.db").touch()
+    result_path = handler_no_7z.extract(archive_path, temp_root)
 
-    with patch.object(handler_no_7z, "_extract_zipfile", return_value=True):
-        result_path = handler_no_7z.extract(archive_path, temp_root)
-
-        assert result_path == inner
-        assert result_path.name == "InnerFolder"
+    assert result_path.name == "InnerFolder"
+    assert result_path.is_relative_to(temp_root)
+    assert (result_path / "01.jpg").read_bytes() == b"image"
 
 
 def test_extract_smart_folder_flat(tmp_path, handler_no_7z):
@@ -63,21 +60,21 @@ def test_extract_smart_folder_flat(tmp_path, handler_no_7z):
     archive_path = tmp_path / "comic.zip"
     temp_root = tmp_path / "temp"
 
-    container = temp_root / "comic"
-    container.mkdir(parents=True)
-    (container / "01.jpg").touch()
-    (container / "02.jpg").touch()
+    with zipfile.ZipFile(archive_path, "w") as zf:
+        zf.writestr("01.jpg", b"first")
+        zf.writestr("02.jpg", b"second")
 
-    with patch.object(handler_no_7z, "_extract_zipfile", return_value=True):
-        result_path = handler_no_7z.extract(archive_path, temp_root)
+    result_path = handler_no_7z.extract(archive_path, temp_root)
 
-        assert result_path == container
-        assert result_path.name == "comic"
+    assert result_path.name == "comic"
+    assert result_path.is_relative_to(temp_root)
+    assert (result_path / "01.jpg").read_bytes() == b"first"
 
 
 def test_7z_command_generation(tmp_path, handler_with_7z):
     """测试 7z 命令生成是否正确"""
     src = tmp_path / "src"
+    src.mkdir()
     out = tmp_path / "out.cbz"
 
     with patch("subprocess.run") as mock_run:
@@ -223,3 +220,207 @@ def test_real_7z_pack_and_extract(tmp_path, ext_config):
     assert result_path.name == "test"
     assert (result_path / "cover.jpg").exists()
     assert (result_path / "cover.jpg").read_bytes() == b"data"
+
+
+@pytest.mark.parametrize(
+    ("name", "safe"),
+    [
+        ("01.jpg", True),
+        ("folder/01.jpg", True),
+        ("folder/sub/01.jpg", True),
+        ("../evil.txt", False),
+        ("folder/../../evil.txt", False),
+        ("/abs.txt", False),
+        ("C:/evil.txt", False),
+        ("..\\evil.txt", False),
+    ],
+)
+def test_is_safe_member(tmp_path, name, safe):
+    """zip-slip 成员名校验：绝对路径 / 上跳 / 盘符都要拒绝"""
+    assert ArchiveHandler._is_safe_member(tmp_path.resolve(), name) is safe
+
+
+def test_extract_rejects_zip_slip(tmp_path, handler_no_7z):
+    """含 ../ 越界路径的压缩包必须整体拒绝解压，不能只跳过那一条"""
+    zip_path = tmp_path / "evil.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.writestr("../escaped.txt", "pwned")
+        zf.writestr("ok.txt", "fine")
+
+    extract_root = tmp_path / "extract_root"
+
+    with pytest.raises(RuntimeError):
+        handler_no_7z.extract(zip_path, extract_root)
+
+    # 越界目标不能出现
+    assert not (extract_root / "escaped.txt").exists()
+    # 整个包被拒绝，正常成员也不应写出
+    assert not (extract_root / "evil" / "ok.txt").exists()
+
+
+def test_extract_rejects_absolute_member(tmp_path, handler_no_7z):
+    """绝对路径成员同样必须被拒绝"""
+    zip_path = tmp_path / "abs_evil.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.writestr("/abs_escaped.txt", "pwned")
+        zf.writestr("ok.txt", "fine")
+
+    extract_root = tmp_path / "extract_root"
+
+    with pytest.raises(RuntimeError):
+        handler_no_7z.extract(zip_path, extract_root)
+
+    assert not (extract_root / "abs_evil" / "ok.txt").exists()
+
+
+def test_extract_normal_zip_still_works(tmp_path, handler_no_7z):
+    """回归：加了校验之后，正常的多层目录压缩包仍能解压"""
+    zip_path = tmp_path / "normal.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.writestr("a/b/c.txt", "deep")
+        zf.writestr("top.txt", "top")
+
+    extract_root = tmp_path / "extract_root"
+    result_path = handler_no_7z.extract(zip_path, extract_root)
+
+    assert (result_path / "a" / "b" / "c.txt").read_text() == "deep"
+    assert (result_path / "top.txt").read_text() == "top"
+
+
+@pytest.mark.parametrize("nested", [False, True])
+def test_extract_same_name_uses_independent_workspaces(tmp_path, handler_no_7z, nested):
+    """同名压缩包和重复提取均不能复用旧容器。"""
+    output = tmp_path / "output"
+    roots = []
+    for index in range(2):
+        source = tmp_path / str(index)
+        source.mkdir()
+        archive = source / "comic.zip"
+        name = "pages/01.jpg" if nested else "01.jpg"
+        with zipfile.ZipFile(archive, "w") as zf:
+            zf.writestr(name, str(index))
+        roots.append(handler_no_7z.extract(archive, output))
+    assert roots[0] != roots[1]
+    assert all(root.name == ("pages" if nested else "comic") for root in roots)
+    assert (roots[0] / "01.jpg").read_text() == "0"
+    assert (roots[1] / "01.jpg").read_text() == "1"
+
+
+def test_extract_does_not_reuse_existing_container_link(tmp_path, handler_no_7z):
+    """用户已有的同名链接目录不能成为解压容器。"""
+    outside = tmp_path / "existing"
+    outside.mkdir()
+    (outside / "keep.txt").write_text("keep")
+    output = tmp_path / "output"
+    output.mkdir()
+    try:
+        (output / "comic").symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("当前环境不允许创建目录链接")
+    archive = tmp_path / "comic.zip"
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr("01.jpg", b"image")
+    root = handler_no_7z.extract(archive, output)
+    assert root.name == "comic"
+    assert root != output / "comic"
+    assert list(outside.iterdir()) == [outside / "keep.txt"]
+
+
+def test_extract_rejects_linked_output_root(tmp_path, handler_no_7z):
+    """工作区自身是链接时应在写入前拒绝。"""
+    outside = tmp_path / "existing"
+    outside.mkdir()
+    linked = tmp_path / "linked"
+    try:
+        linked.symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("当前环境不允许创建目录链接")
+    with pytest.raises(RuntimeError, match="链接"):
+        handler_no_7z.extract(tmp_path / "comic.zip", linked)
+    assert list(outside.iterdir()) == []
+
+
+@pytest.mark.parametrize("use_7z", [False, True])
+def test_pack_fails_on_directory_enumeration_error(
+    tmp_path, handler_no_7z, monkeypatch, use_7z
+):
+    """读取目录失败不能静默发布一个残缺的归档。"""
+    source = tmp_path / "source"
+    source.mkdir()
+    handler_no_7z.seven_zip = "7z" if use_7z else None
+
+    def denied_walk(self, *, on_error=None):
+        assert on_error is not None
+        on_error(PermissionError("目录不可读"))
+        yield
+
+    monkeypatch.setattr(Path, "walk", denied_walk)
+    with patch.object(handler_no_7z, "_run_subprocess") as run:
+        assert not handler_no_7z.pack(source, tmp_path / "output.zip")
+    run.assert_not_called()
+
+
+def test_7z_pack_resolves_relative_output(tmp_path, handler_with_7z, monkeypatch):
+    """切换到源目录执行 7z 前，输出路径必须先转为绝对路径。"""
+    monkeypatch.chdir(tmp_path)
+    source = tmp_path / "source"
+    source.mkdir()
+    with patch.object(handler_with_7z, "_run_subprocess", return_value=True) as run:
+        assert handler_with_7z.pack(source, Path("output.cbz"), fmt="cbz")
+    command = run.call_args.args[0]
+    assert command[2] == str(tmp_path / "output.cbz")
+    assert run.call_args.kwargs["cwd"] == str(source)
+
+
+def test_7z_extraction_rejects_link_entries_before_extracting(
+    tmp_path, handler_with_7z
+):
+    """仅使用目录清单模拟链接条目，不构造恶意归档。"""
+    listing = b"Path = pages\r\nSymbolic Link = existing\r\n\r\n"
+    with (
+        patch("subprocess.run", return_value=MagicMock(stdout=listing)),
+        patch.object(handler_with_7z, "_run_subprocess") as extract,
+        pytest.raises(RuntimeError, match="链接"),
+    ):
+        handler_with_7z.extract(tmp_path / "comic.7z", tmp_path / "output")
+    extract.assert_not_called()
+    assert list((tmp_path / "output").iterdir()) == []
+
+
+def test_extraction_does_not_unwrap_linked_directory(tmp_path, handler_no_7z):
+    """模拟后端返回链接目录，必须拒绝而非把链接当内容根目录。"""
+    existing = tmp_path / "existing"
+    existing.mkdir()
+    (existing / "keep.txt").write_text("keep")
+    probe = tmp_path / "probe"
+    try:
+        probe.symlink_to(existing, target_is_directory=True)
+    except OSError:
+        pytest.skip("当前环境不允许创建目录链接")
+    probe.unlink()
+
+    def extracted_link(archive, container):
+        (container / "pages").symlink_to(existing, target_is_directory=True)
+        return True
+
+    with (
+        patch.object(handler_no_7z, "_extract_zipfile", side_effect=extracted_link),
+        pytest.raises(RuntimeError, match="链接"),
+    ):
+        handler_no_7z.extract(tmp_path / "comic.zip", tmp_path / "output")
+    assert (existing / "keep.txt").read_text() == "keep"
+    assert list((tmp_path / "output").iterdir()) == []
+
+
+def test_7z_listing_accepts_windows_member_separators(tmp_path, handler_with_7z):
+    """7z 清单在 Windows 使用反斜杠，安全子目录仍应能提取。"""
+    listing = b"Path = pages\\01.jpg\r\nAttributes = A\r\n\r\n"
+    output = tmp_path / "output"
+    output.mkdir()
+    with (
+        patch("subprocess.run", return_value=MagicMock(stdout=listing)),
+        patch.object(handler_with_7z, "_run_subprocess", return_value=True) as extract,
+    ):
+        assert handler_with_7z._extract_7z(tmp_path / "comic.7z", output)
+    assert extract.call_args.args[0][1] == "x"
+    assert f"-o{output.resolve()}" in extract.call_args.args[0]

@@ -2,6 +2,7 @@ import errno
 import shutil
 from pathlib import Path
 from unittest.mock import patch
+from zipfile import ZipFile
 
 import pytest
 from PIL import Image
@@ -126,26 +127,21 @@ def test_scanner_skip_clean_archive(
 def test_scanner_process_dirty_archive(
     scanner_setup, ext_config, mock_image_processor, archive_options
 ):
-    """测试：压缩包内有垃圾文件，触发重打包流程"""
-    (scanner_setup / "dirty.zip").touch()
-
-    with patch("koma.core.scanner.ArchiveHandler") as MockHandler:
-        mock_instance = MockHandler.return_value
-        mock_instance.extract.return_value = Path("/tmp/mock_extract")
-
-        with patch.object(Scanner, "_clean_directory_recursive", return_value=1):
-            scanner = Scanner(scanner_setup, ext_config, mock_image_processor)
-            results = list(scanner.run(options=archive_options))
-
-            # 验证统计数据
-            total_processed = sum(res.processed_archives for _, res in results)
-            assert total_processed == 1
-
-            # 验证调用了 pack，且参数正确
-            mock_instance.pack.assert_called_once()
-            _, kwargs = mock_instance.pack.call_args
-            assert kwargs["fmt"] == "cbz"
-            assert kwargs.get("level") == "normal"
+    """脏包成功发布后才计入成功，原包保持不变。"""
+    archive = scanner_setup / "dirty.zip"
+    with ZipFile(archive, "w") as zf:
+        zf.writestr("page.jpg", b"page")
+        zf.writestr("ad.url", b"junk")
+    original = archive.read_bytes()
+    scanner = Scanner(scanner_setup, ext_config, mock_image_processor)
+    scanner.archive_handler.seven_zip = None
+    results = list(scanner.run(options=archive_options))
+    assert sum(res.processed_archives for _, res in results) == 1
+    assert sum(res.failed_archives for _, res in results) == 0
+    assert archive.read_bytes() == original
+    with ZipFile(Path(archive_options["archive_out_path"]) / "dirty.cbz") as zf:
+        assert zf.namelist() == ["page.jpg"]
+        assert zf.read("page.jpg") == b"page"
 
 
 def test_scanner_archive_disk_space_check(
@@ -353,3 +349,163 @@ def test_scanner_custom_ad_matching(
 
     assert "01_normal_page.jpg" not in ads_names
     assert "01_normal_page.jpg" in convert_names
+
+
+def test_archive_repack_keeps_dotted_stem(tmp_path, ext_config, mock_image_processor):
+    """带小数点的归档名完整保留。"""
+    source = tmp_path / "src"
+    source.mkdir()
+    with ZipFile(source / "C99 doujin v1.2.zip", "w") as zf:
+        zf.writestr("page.jpg", b"page")
+        zf.writestr("ad.url", b"junk")
+    scanner = Scanner(source, ext_config, mock_image_processor)
+    scanner.archive_handler.seven_zip = None
+    options = {
+        "enable_archive_scan": True,
+        "archive_out_path": str(tmp_path / "out"),
+        "repack": True,
+        "pack_format": "cbz",
+    }
+    list(scanner.run(options))
+    with ZipFile(tmp_path / "out" / "C99 doujin v1.2.cbz") as zf:
+        assert zf.read("page.jpg") == b"page"
+
+
+def test_system_junk_config_is_honoured(tmp_path, ext_config, mock_image_processor):
+    """
+    system_junk 必须真正生效：即使扩展名被加进支持列表，也要判为垃圾。
+    （旧实现只按扩展名判断，这个配置项形同摆设）
+    """
+    # 把 .db 加进可转换格式，模拟"扩展名本身合法"的情况
+    ext_config.convert.add(".db")
+
+    scanner = Scanner(tmp_path, ext_config, mock_image_processor)
+
+    assert scanner._is_junk(tmp_path / "Thumbs.db") is True
+    assert scanner._is_junk(tmp_path / "desktop.ini") is True
+    # 白名单优先级不受影响
+    assert scanner._is_junk(tmp_path / "ComicInfo.xml") is False
+
+
+def test_macosx_dir_is_collected_as_junk(tmp_path, ext_config, mock_image_processor):
+    """__MACOSX 是目录，必须整体列为待清理项，且不再被递归扫描"""
+    work_dir = tmp_path / "manga"
+    work_dir.mkdir()
+    (work_dir / "01.jpg").touch()
+
+    macosx = work_dir / "__MACOSX"
+    macosx.mkdir()
+    (macosx / "._01.jpg").touch()
+
+    scanner = Scanner(work_dir, ext_config, mock_image_processor)
+    results = list(scanner.run())
+
+    assert len(results) == 1
+    _, res = results[0]
+
+    junk_names = [p.name for p in res.junk]
+    assert "__MACOSX" in junk_names
+    # 目录被整体跳过，内部文件不再单独列出
+    assert "._01.jpg" not in junk_names
+    # 正常图片不受影响
+    assert [p.name for p in res.to_convert] == ["01.jpg"]
+
+
+def test_ad_detection_covers_first_image(tmp_path, ext_config, mock_image_processor):
+    """单页文件夹也要检测广告（旧实现 range(len-1, 0, -1) 永远漏掉索引 0）"""
+    work_dir = tmp_path / "single_page"
+    work_dir.mkdir()
+    (work_dir / "only.jpg").touch()
+
+    mock_image_processor.has_ad_qrcode.return_value = True
+
+    scanner = Scanner(work_dir, ext_config, mock_image_processor)
+    results = list(scanner.run(options={"enable_ad_scan": True}))
+
+    assert len(results) == 1
+    _, res = results[0]
+    assert [p.name for p in res.ads] == ["only.jpg"]
+
+
+def test_failed_repack_preserves_existing_output(
+    tmp_path, ext_config, mock_image_processor
+):
+    source = tmp_path / "source"
+    source.mkdir()
+    with ZipFile(source / "book.zip", "w") as zf:
+        zf.writestr("ad.url", b"junk")
+    output = tmp_path / "out"
+    output.mkdir()
+    old = output / "book.zip"
+    old.write_bytes(b"old output")
+    scanner = Scanner(source, ext_config, mock_image_processor)
+
+    def fail_pack(content, staged, **kwargs):
+        staged.write_bytes(b"partial")
+        return False
+
+    with patch.object(scanner.archive_handler, "pack", side_effect=fail_pack):
+        results = list(
+            scanner.run({"enable_archive_scan": True, "archive_out_path": str(output)})
+        )
+    assert sum(res.processed_archives for _, res in results) == 0
+    assert sum(res.failed_archives for _, res in results) == 1
+    assert old.read_bytes() == b"old output"
+    assert sorted(p.name for p in output.iterdir()) == ["book.zip"]
+
+
+@pytest.mark.parametrize("repack", [True, False])
+def test_scanner_output_conflicts_keep_both_versions(
+    tmp_path, ext_config, mock_image_processor, repack
+):
+    source = tmp_path / "source"
+    source.mkdir()
+    with ZipFile(source / "book.zip", "w") as zf:
+        zf.writestr("page.jpg", b"new page")
+        zf.writestr("ad.url", b"junk")
+    output = tmp_path / "out"
+    output.mkdir()
+    if repack:
+        (output / "book.zip").write_bytes(b"old archive")
+    else:
+        (output / "book").mkdir()
+        (output / "book" / "page.jpg").write_bytes(b"old page")
+    scanner = Scanner(source, ext_config, mock_image_processor)
+    scanner.archive_handler.seven_zip = None
+    results = list(
+        scanner.run(
+            {
+                "enable_archive_scan": True,
+                "archive_out_path": str(output),
+                "repack": repack,
+            }
+        )
+    )
+    assert sum(res.processed_archives for _, res in results) == 1
+    if repack:
+        assert (output / "book.zip").read_bytes() == b"old archive"
+        new = next(output.glob("book_*.zip"))
+        with ZipFile(new) as zf:
+            assert zf.read("page.jpg") == b"new page"
+    else:
+        assert (output / "book" / "page.jpg").read_bytes() == b"old page"
+        new = next(output.glob("book_*"))
+        assert (new / "page.jpg").read_bytes() == b"new page"
+
+
+def test_clean_failure_is_not_reported_as_clean_archive(
+    tmp_path, ext_config, mock_image_processor
+):
+    with ZipFile(tmp_path / "book.zip", "w") as zf:
+        zf.writestr("junk.url", b"junk")
+    scanner = Scanner(tmp_path, ext_config, mock_image_processor)
+    with patch.object(
+        scanner, "_clean_directory_recursive", side_effect=PermissionError("denied")
+    ):
+        results = list(
+            scanner.run(
+                {"enable_archive_scan": True, "archive_out_path": str(tmp_path / "out")}
+            )
+        )
+    assert sum(res.failed_archives for _, res in results) == 1
+    assert not (tmp_path / "out").exists()

@@ -1,6 +1,5 @@
 import csv
 import logging
-import shutil
 import tempfile
 import time
 import uuid
@@ -13,10 +12,22 @@ from send2trash import send2trash
 
 from koma.config import ExtensionsConfig
 from koma.core.archive import ArchiveHandler
+from koma.core.file_safety import move_no_replace, validate_prefix
 from koma.core.image_processor import ImageProcessor
 from koma.core.scanner import Scanner
 
 logger = logging.getLogger(__name__)
+
+KOMA_TMP_PREFIX = "koma_tmp_"
+
+
+class RenameBatchError(RuntimeError):
+    """批次存在失败；保留已提交操作的映射，供报告和界面展示。"""
+
+    def __init__(self, failures: list[str], rows: list):
+        self.failures = failures
+        self.rows = rows
+        super().__init__("重命名未全部完成：" + "；".join(failures))
 
 
 class Renamer:
@@ -52,6 +63,15 @@ class Renamer:
         start_index = options.get("start_index", 0)
         enable_archive_scan = options.get("enable_archive_scan", False)
         pack_format = options.get("pack_format", "zip")
+        validate_prefix(prefix)
+        if (
+            isinstance(start_index, bool)
+            or not isinstance(start_index, int)
+            or start_index < 0
+        ):
+            raise ValueError("起始序号必须是非负整数")
+        if pack_format not in {"zip", "cbz", "7z", "cb7"}:
+            raise ValueError("不支持的归档格式")
 
         scan_opts = options.copy()
         scan_opts["enable_archive_scan"] = False
@@ -63,29 +83,60 @@ class Renamer:
         )
 
         all_csv_rows = []
+        failures = []
 
-        for root, result in scanner.run(options=scan_opts):
-            # 处理普通文件夹内的图片
-            all_images = result.to_convert + result.to_copy
-            if all_images:
-                folder_csv_rows = self._rename_files_in_dir(
-                    root, all_images, export_csv, prefix, start_index, progress_callback
-                )
-                all_csv_rows.extend(folder_csv_rows)
+        def record_failure(error: Exception) -> None:
+            logger.error(f"重命名任务失败: {error}")
+            if isinstance(error, RenameBatchError):
+                all_csv_rows.extend(error.rows)
+                failures.extend(error.failures)
+            else:
+                failures.append(str(error))
 
-            if enable_archive_scan and result.archives:
-                for arc_path in result.archives:
-                    archive_csv_rows = self._process_archive(
-                        arc_path, pack_format, prefix, start_index, progress_callback
-                    )
-                    all_csv_rows.extend(archive_csv_rows)
+        try:
+            for root, result in scanner.run(options=scan_opts):
+                all_images = result.to_convert + result.to_copy
+                if all_images:
+                    try:
+                        all_csv_rows.extend(
+                            self._rename_files_in_dir(
+                                root,
+                                all_images,
+                                True,
+                                prefix,
+                                start_index,
+                                progress_callback,
+                            )
+                        )
+                    except Exception as e:
+                        record_failure(e)
+
+                if enable_archive_scan:
+                    for arc_path in result.archives:
+                        try:
+                            all_csv_rows.extend(
+                                self._process_archive(
+                                    arc_path,
+                                    pack_format,
+                                    prefix,
+                                    start_index,
+                                    progress_callback,
+                                )
+                            )
+                        except Exception as e:
+                            record_failure(e)
+        except Exception as e:
+            record_failure(e)
 
         if export_csv and all_csv_rows:
-            self._write_csv_report(all_csv_rows)
-
+            try:
+                self._write_csv_report(all_csv_rows)
+            except Exception as e:
+                record_failure(e)
+        if failures:
+            raise RenameBatchError(failures, all_csv_rows)
         if progress_callback:
             progress_callback(1, 1, "重命名任务完成")
-
         logger.info("🎉 所有重命名任务完成！")
 
     def _process_archive(
@@ -96,79 +147,72 @@ class Renamer:
         start_index: int = 0,
         progress_callback: Callable | None = None,
     ) -> list:
-        """处理单个压缩包：解压 -> 重命名 -> 重打包 -> 安全替换"""
-        csv_rows = []
-        temp_pack_path = None
+        """处理单个压缩包；发布成功前不报告映射、不删除原包。"""
+        validate_prefix(prefix)
+        if pack_format not in {"zip", "cbz", "7z", "cb7"}:
+            raise ValueError("不支持的归档格式")
+        if progress_callback:
+            progress_callback(0, 0, f"正在处理压缩包: {archive_path.name}")
 
+        published_rows = []
         try:
-            if progress_callback:
-                progress_callback(0, 0, f"正在处理压缩包: {archive_path.name}")
-
             with tempfile.TemporaryDirectory(prefix="koma_rename_") as temp_dir:
-                temp_root = Path(temp_dir)
-
-                try:
-                    content_root = self.archive_handler.extract(archive_path, temp_root)
-                except Exception as e:
-                    logger.error(f"解压失败 {archive_path.name}: {e}")
-                    return []
-
-                images = []
-                for r, _, files in content_root.walk():
-                    for f in files:
-                        fp = Path(r) / f
-                        if fp.suffix.lower() in self.ext_config.all_supported_img:
-                            images.append(fp)
-
-                changed_rows = self._rename_files_in_dir(
-                    content_root, images, True, prefix, start_index, None
+                content_root = self.archive_handler.extract(
+                    archive_path, Path(temp_dir)
                 )
-
+                images = [
+                    path
+                    for path in self.archive_handler._iter_files(content_root)
+                    if path.suffix.lower() in self.ext_config.all_supported_img
+                ]
+                try:
+                    changed_rows = self._rename_files_in_dir(
+                        content_root, images, True, prefix, start_index, None
+                    )
+                except RenameBatchError as e:
+                    # 解压副本的未提交修改不能进入用户文件映射报告。
+                    raise RuntimeError(
+                        f"压缩包内重命名失败: {archive_path}: {e}"
+                    ) from e
                 if not changed_rows:
                     logger.info(f"⏩ 压缩包内无需重命名，跳过: {archive_path}")
                     return []
 
-                for row in changed_rows:
-                    row[0] = f"📦 {archive_path}"
-                csv_rows.extend(changed_rows)
+                # 独占目录位于目标文件系统，避免跨卷复制和固定临时名冲突。
+                with tempfile.TemporaryDirectory(
+                    prefix=KOMA_TMP_PREFIX, dir=archive_path.parent
+                ) as pack_dir:
+                    staged = Path(pack_dir) / f"{archive_path.stem}.{pack_format}"
+                    if not self.archive_handler.pack(
+                        content_root, staged, fmt=pack_format, level="normal"
+                    ):
+                        raise RuntimeError(f"重打包失败: {archive_path}")
+                    final_path = archive_path.with_suffix(f".{pack_format}")
+                    attempt = 0
+                    while True:
+                        try:
+                            move_no_replace(staged, final_path)
+                            break
+                        except FileExistsError:
+                            attempt += 1
+                            final_path = archive_path.with_name(
+                                f"{archive_path.stem}_{uuid.uuid4().hex}_{attempt}"
+                                f".{pack_format}"
+                            )
+                    for row in changed_rows:
+                        row[0] = f"📦 {archive_path} -> {final_path}"
+                    published_rows = changed_rows
 
-                temp_pack_path = (
-                    archive_path.parent / f"{archive_path.stem}_tmp.{pack_format}"
-                )
-
-                success = self.archive_handler.pack(
-                    content_root, temp_pack_path, fmt=pack_format, level="normal"
-                )
-
-                if not success:
-                    raise RuntimeError("重打包失败")
-
-            # 安全替换
-            send2trash(str(archive_path))
-            logger.info(f"🗑️ 原文件已移入回收站: {archive_path.name}")
-
-            final_name = f"{archive_path.stem}.{pack_format}"
-            final_path = archive_path.parent / final_name
-
-            if final_path.exists():
-                final_path = (
-                    archive_path.parent
-                    / f"{archive_path.stem}_{int(time.time())}.{pack_format}"
-                )
-                logger.warning("⚠️ 存在同名文件，新压缩包已更名！")
-
-            shutil.move(str(temp_pack_path), str(final_path))
             logger.info(f"✅ 压缩包处理完成: {final_path.name}")
-
+            send2trash(str(archive_path))
         except Exception as e:
-            logger.error(f"处理压缩包出错 {archive_path.name}: {e}")
-            if temp_pack_path and temp_pack_path.exists():
-                try:
-                    temp_pack_path.unlink()
-                except Exception:
-                    pass
-
-        return csv_rows
+            if published_rows:
+                raise RenameBatchError(
+                    [f"新包已生成，但后续清理失败 {archive_path}: {e}"],
+                    published_rows,
+                ) from e
+            raise
+        return published_rows
 
     def _rename_files_in_dir(
         self,
@@ -180,6 +224,13 @@ class Renamer:
         progress_callback: Callable[[int, int, str], None] | None = None,
     ) -> list:
         """核心重命名逻辑"""
+        validate_prefix(prefix)
+        if (
+            isinstance(start_index, bool)
+            or not isinstance(start_index, int)
+            or start_index < 0
+        ):
+            raise ValueError("起始序号必须是非负整数")
         if not files:
             return []
 
@@ -222,44 +273,80 @@ class Renamer:
 
         logger.info(f"{dir_name}")
 
-        temp_map = []
-        total_ops = len(pending_ops) * 2
-        current_op = 0
+        # 保存完整原路径，嵌套目录回滚时不能把文件恢复到根目录。
+        staged: list[tuple[Path, Path, Path]] = []
+        done = 0
+        source_paths = {source.absolute() for source, _ in pending_ops}
+        for source, name in pending_ops:
+            target = source.absolute().with_name(name)
+            if (target.exists() or target.is_symlink()) and target not in source_paths:
+                raise FileExistsError(f"重命名目标已存在: {target}")
 
         try:
-            # 临时重命名为 UUID，防止冲突
-            for src_path, target_name in pending_ops:
-                temp_name = f".tmp_{uuid.uuid4()}{src_path.suffix}"
-                temp_path = src_path.parent / temp_name
-                src_path.rename(temp_path)
-                temp_map.append((temp_path, target_name, src_path.name))
-                current_op += 1
-                # if progress_callback:
-                #     progress_callback(current_op, total_ops, "预处理重命名...")
+            for source, target_name in pending_ops:
+                source = source.absolute()
+                temp_path = source.with_name(
+                    f"{KOMA_TMP_PREFIX}{uuid.uuid4().hex}{source.suffix}"
+                )
+                move_no_replace(source, temp_path)
+                staged.append((temp_path, source.with_name(target_name), source))
 
-            # 最终重命名
-            for temp_path, target_name, original_src_name in temp_map:
-                final_path = temp_path.parent / target_name
-                temp_path.rename(final_path)
-                logger.info(f"🔁 {original_src_name} -> {target_name}")
-
-                # 收集 CSV 数据
-                if return_csv:
-                    folder_csv_rows.append(
-                        [str(root_path), original_src_name, target_name]
-                    )
-                current_op += 1
+            for i, (temp_path, final_path, original_path) in enumerate(staged):
+                move_no_replace(temp_path, final_path)
+                staged[i] = (final_path, final_path, original_path)
+                done = i + 1
+                logger.info(f"🔁 {original_path} -> {final_path.name}")
                 if progress_callback:
                     progress_callback(
-                        current_op,
-                        total_ops,
-                        f"重命名: {root_path / original_src_name} -> {target_name}",
+                        done,
+                        len(staged),
+                        f"重命名: {original_path} -> {final_path.name}",
                     )
-
         except Exception as e:
-            logger.error(f"文件夹 {root_path} 重命名发生错误: {e}")
+            remaining = self._rollback_rename(staged, done, root_path)
+            rows = [
+                [str(root_path), str(original), str(current)]
+                for current, _, original in remaining
+                if current != original and current.exists()
+            ]
+            raise RenameBatchError([f"文件夹 {root_path}: {e}"], rows) from e
 
+        if return_csv:
+            folder_csv_rows = [
+                [
+                    str(root_path),
+                    str(original.relative_to(root_path.absolute())),
+                    str(final.relative_to(root_path.absolute())),
+                ]
+                for _, final, original in staged
+            ]
         return folder_csv_rows
+
+    def _rollback_rename(
+        self, staged: list[tuple[Path, Path, Path]], done: int, root_path: Path
+    ) -> list[tuple[Path, Path, Path]]:
+        """先腾空已发布名称，再按完整原路径恢复，绝不覆盖冲突文件。"""
+        logger.warning(f"↩️ 正在回滚 {root_path} 中的重命名操作...")
+        for i in range(done):
+            current, target, original = staged[i]
+            temporary = current.with_name(
+                f"{KOMA_TMP_PREFIX}{uuid.uuid4().hex}{current.suffix}"
+            )
+            try:
+                move_no_replace(current, temporary)
+                staged[i] = (temporary, target, original)
+            except OSError as e:
+                logger.critical(f"⛔ 回滚暂存失败，保留 {current}: {e}")
+
+        for i, (current, target, original) in enumerate(staged):
+            try:
+                move_no_replace(current, original)
+                staged[i] = (original, target, original)
+            except OSError as e:
+                logger.critical(
+                    f"⛔ 回滚受阻，文件保留在 {current}，未覆盖 {original}: {e}"
+                )
+        return staged
 
     def _write_csv_report(self, rows: list):
         """生成 CSV 报告"""
@@ -273,3 +360,4 @@ class Renamer:
             logger.info(f"📊 CSV 映射报告已生成: {csv_path}")
         except Exception as e:
             logger.error(f"生成 CSV 报告失败: {e}")
+            raise
