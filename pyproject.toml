@@ -23,7 +23,7 @@ classifiers = [
 dependencies = [
     "natsort>=8.4.0",
     "onnxruntime>=1.25.1",
-    "opencv-contrib-python-headless>=4.13.0.90",
+    "opencv-contrib-python-headless>=5.1.0",
     "pillow>=12.1.0",
     "send2trash>=2.1.0",
     "tkinterdnd2>=0.4.3",
@@ -48,7 +48,7 @@ Repository = "https://github.com/grasssand/koma"
 "Bug Tracker" = "https://github.com/grasssand/koma/issues"
 
 [build-system]
-requires = ["uv_build>=0.11.0,<0.12.0"]
+requires = ["uv_build>=0.11.0,<1.0"]
 build-backend = "uv_build"
 
 [tool.ruff]

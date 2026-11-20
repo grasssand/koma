@@ -57,26 +57,41 @@ system_junk = [
 [scanner]
 # 是否开启广告扫描
 enable_ad_scan = false
-# 二维码白名单 (包含这些域名的二维码不视为广告)
+# 是否开启自定义广告图扫描
+enable_custom_ad_scan = false
+# 是否开启压缩包扫描
+enable_archive_scan = false
+# 二维码白名单 (匹配二维码 URL 的 host 域名，含其子域；不含这些的视为广告)
 qr_whitelist = [
+    "alice-books.com",
     "bilibili.com",
-    "bluesky",
+    "bluesky.social",
+    "bookwalker.jp",
     "booth.pm",
     "bsky.app",
+    "candypop.jp",
     "ci-en.jp",
     "ci-en.net",
+    "cmoa.jp",
+    "comicbavel.com",
     "crepu.net",
     "discord.com",
     "discord.gg",
+    "dl.getchu.com",
     "dlsite.com",
     "dmm.co.jp",
     "facebook.com",
     "fanbox.cc",
     "fantia.jp",
     "gumroad.com",
+    "gyutto.com",
+    "ichijinsha.co.jp",
     "instagram.com",
+    "kadokawa.co.jp",
     "ko-fi.com",
+    "kodansha.co.jp",
     "lofter.com",
+    "mandarake.co.jp",
     "mastodon.social",
     "melonbooks.co.jp",
     "misskey.design",
@@ -85,9 +100,13 @@ qr_whitelist = [
     "pawoo.net",
     "pixiv.net",
     "qq.com",
+    "shogakukan.co.jp",
+    "shueisha.co.jp",
     "skeb.jp",
+    "suruga-ya.jp",
     "t.me",
     "telegram.org",
+    "toranoana.jp",
     "tumblr.com",
     "twitter.com",
     "weibo.com",

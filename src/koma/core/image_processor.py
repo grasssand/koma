@@ -1,6 +1,7 @@
 import logging
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import cv2
 import numpy as np
@@ -69,16 +70,9 @@ class ImageProcessor:
             for url in found_urls:
                 if not url:
                     continue
-                url_lower = url.lower()
 
                 # 只要发现一个不在白名单里的，就判定为广告
-                is_safe = False
-                for safe_domain in self.config.qr_whitelist:
-                    if safe_domain in url_lower:
-                        is_safe = True
-                        break
-
-                if not is_safe:
+                if not self._is_whitelisted(url):
                     logger.info(f"🚫 发现二维码广告: {url[:30]}... 在 {file_path}")
                     return True
 
@@ -87,6 +81,40 @@ class ImageProcessor:
         except Exception as e:
             logger.debug(f"二维码检测出错 {file_path.name}: {e}")
             return False
+
+    @staticmethod
+    def _extract_host(url: str) -> str:
+        """
+        从二维码内容里取出 host。
+        """
+        text = url.strip()
+        if not text:
+            return ""
+
+        if "://" not in text:
+            text = "http://" + text
+
+        try:
+            return urlsplit(text).hostname or ""
+        except ValueError:
+            # 端口非法等情况下 hostname 会抛异常
+            return ""
+
+    def _is_whitelisted(self, url: str) -> bool:
+        """
+        按 host 做**域名边界**匹配二维码内容是否命中白名单域名。
+        """
+        host = self._extract_host(url)
+        if not host:
+            return False
+
+        for domain in self.config.qr_whitelist:
+            d = domain.strip().lower().lstrip(".")
+            if not d:
+                continue
+            if host == d or host.endswith("." + d):
+                return True
+        return False
 
     def _check_is_animated(self, file_path: Path) -> bool:
         try:
@@ -111,43 +139,25 @@ class ImageProcessor:
             return False
 
     def _get_qr_detector(self):
-        """加载二维码模型"""
+        """
+        加载二维码检测引擎。
+
+        OpenCV 5.0 起 WeChatQRCode 的两个 CNN 模型（目标检测 + 超分）已内置在 cv2
+        """
         if self._qr_detector is not None:
             return self._qr_detector
 
         try:
-            import sys
-
-            if getattr(sys, "frozen", False):
-                base_path = Path(sys._MEIPASS) / "koma"  # type: ignore
-            else:
-                base_path = Path(__file__).parent.parent
-
-            model_dir = base_path / "resources" / "wechat_qrcode"
-
-            files = [
-                "detect.prototxt",
-                "detect.caffemodel",
-                "sr.prototxt",
-                "sr.caffemodel",
-            ]
-            if all((model_dir / f).exists() for f in files):
-                self._qr_detector = cv2.wechat_qrcode_WeChatQRCode(  # type: ignore
-                    str(model_dir / "detect.prototxt"),
-                    str(model_dir / "detect.caffemodel"),
-                    str(model_dir / "sr.prototxt"),
-                    str(model_dir / "sr.caffemodel"),
-                )
-                self._qr_engine_type = "WECHAT"
-                logger.debug("✅ 微信二维码引擎加载成功")
-                return self._qr_detector
-            else:
-                logger.warning(f"⚠️ 微信模型文件缺失: {model_dir}")
-
+            self._qr_detector = cv2.wechat_qrcode_WeChatQRCode()  # type: ignore
+            self._qr_engine_type = "WECHAT"
+            logger.debug("✅ 微信二维码引擎加载成功")
+            return self._qr_detector
         except Exception as e:
-            logger.warning(f"⚠️ 微信模型加载异常: {e}")
+            logger.warning(f"⚠️ 微信二维码引擎加载异常: {e}")
 
-        logger.info("🔄 回退使用标准 OpenCV QRCodeDetector")
+        # 兜底：WeChatQRCode 不可用时退回标准检测器。
+        # 但小尺寸 / 低对比 / 模糊的广告码检出率会明显下降（实测 8/12 -> 3/12），
+        logger.warning("⚠️ 已回退使用标准 OpenCV QRCodeDetector，广告检出率会明显下降")
         self._qr_detector = cv2.QRCodeDetector()
         self._qr_engine_type = "STANDARD"
         return self._qr_detector
