@@ -5,6 +5,8 @@ import tkinter as tk
 import tkinter.font as tkfont
 import urllib.request
 import webbrowser
+from copy import deepcopy
+from dataclasses import fields
 from pathlib import Path
 from tkinter import messagebox, ttk
 
@@ -12,7 +14,12 @@ from PIL import Image, ImageTk
 
 import koma
 from koma.config import IMG_OUTPUT_FORMATS, ConfigManager, GlobalConfig
-from koma.utils import logger
+from koma.utils import (
+    get_log_file_path,
+    logger,
+    remove_file_logging,
+    setup_file_logging,
+)
 
 
 class SettingsDialog(tk.Toplevel):
@@ -34,8 +41,9 @@ class SettingsDialog(tk.Toplevel):
         self.mono_font_var = tk.StringVar()
         self.font_size_var = tk.IntVar()
         self.list_font_size_var = tk.IntVar()
+        self.enable_file_log_var = tk.BooleanVar()
 
-        self.worker_var = tk.IntVar()
+        self.worker_var = tk.StringVar()
         self.format_var = tk.StringVar()
         self.quality_var = tk.IntVar()
         self.lossless_var = tk.BooleanVar()
@@ -154,6 +162,31 @@ class SettingsDialog(tk.Toplevel):
         ttk.Spinbox(
             f3, from_=8, to=30, textvariable=self.list_font_size_var, width=5
         ).pack(side="left", padx=5)
+
+        grp_log = ttk.LabelFrame(self.tab_app, text="日志", padding=10)
+        grp_log.pack(fill="x", pady=(10, 0))
+
+        ttk.Checkbutton(
+            grp_log,
+            text="保存本地日志文件",
+            variable=self.enable_file_log_var,
+        ).pack(anchor="w")
+
+        ttk.Label(
+            grp_log,
+            text=f"路径：{get_log_file_path(self.config.config_dir)}",
+            foreground="gray",
+            wraplength=520,
+            justify="left",
+        ).pack(anchor="w", pady=(5, 0))
+
+        ttk.Label(
+            grp_log,
+            text="关闭后日志只在界面内显示，程序出问题时将无从排查。保存后立即生效。",
+            foreground="gray",
+            wraplength=520,
+            justify="left",
+        ).pack(anchor="w", pady=(2, 0))
 
     def _init_scan_tab(self):
         """扫描清理设置"""
@@ -383,6 +416,7 @@ class SettingsDialog(tk.Toplevel):
         self.mono_font_var.set(getattr(self.config.app, "monospace_font", "Consolas"))
         self.font_size_var.set(self.config.app.font_size)
         self.list_font_size_var.set(getattr(self.config.app, "list_font_size", 10))
+        self.enable_file_log_var.set(getattr(self.config.app, "enable_file_log", True))
 
         # Converter
         self.worker_var.set(self.config.converter.max_workers)
@@ -551,65 +585,102 @@ class SettingsDialog(tk.Toplevel):
         self.btn_update.config(state="disabled", text="检查中...")
         threading.Thread(target=self._fetch_latest_release, daemon=True).start()
 
+    def _apply_config(self, source: GlobalConfig) -> None:
+        """将已持久化的配置写回原对象，保留各子配置对象身份。"""
+        for section_name in (
+            "app",
+            "converter",
+            "deduplicator",
+            "extensions",
+            "scanner",
+        ):
+            target_section = getattr(self.config, section_name)
+            source_section = getattr(source, section_name)
+            for config_field in fields(source_section):
+                setattr(
+                    target_section,
+                    config_field.name,
+                    deepcopy(getattr(source_section, config_field.name)),
+                )
+
     def _save(self):
         """保存配置到磁盘"""
         try:
-            # App
             try:
                 w = int(self.win_width_var.get())
                 h = int(self.win_height_var.get())
                 if w < 100 or h < 100:
                     raise ValueError("窗口尺寸过小")
-
-                self.config.app.width = w
-                self.config.app.height = h
             except (ValueError, tk.TclError):
                 messagebox.showwarning("输入错误", "窗口宽度和高度必须是有效的整数！")
                 return
 
-            self.config.app.font = self.font_var.get()
-            self.config.app.monospace_font = self.mono_font_var.get()
-            self.config.app.font_size = self.font_size_var.get()
-            self.config.app.list_font_size = self.list_font_size_var.get()
+            try:
+                worker_count = int(self.worker_var.get())
+                if worker_count < 0:
+                    raise ValueError("线程数不能为负数")
+            except (ValueError, tk.TclError):
+                messagebox.showwarning(
+                    "输入错误", "最大线程数必须是非负整数（0 表示自动）！"
+                )
+                return
 
-            # Converter
-            self.config.converter.max_workers = self.worker_var.get()
-            self.config.converter.format = self.format_var.get()
-            self.config.converter.quality = self.quality_var.get()
-            self.config.converter.lossless = self.lossless_var.get()
+            # 先在独立对象上收集输入，避免半成品污染运行中的配置。
+            candidate = deepcopy(self.config)
+            candidate.app.width = w
+            candidate.app.height = h
+            candidate.app.font = self.font_var.get()
+            candidate.app.monospace_font = self.mono_font_var.get()
+            candidate.app.font_size = self.font_size_var.get()
+            candidate.app.list_font_size = self.list_font_size_var.get()
+            candidate.app.enable_file_log = self.enable_file_log_var.get()
 
-            # Deduplicator
+            candidate.converter.max_workers = worker_count
+            candidate.converter.format = self.format_var.get()
+            candidate.converter.quality = self.quality_var.get()
+            candidate.converter.lossless = self.lossless_var.get()
+
             regex_val = self.editors["regex"].get("1.0", "end-1c").strip()
             if regex_val:
-                self.config.deduplicator.comic_dir_regex = regex_val
+                candidate.deduplicator.comic_dir_regex = regex_val
 
-            # Extensions
-            self.config.extensions.convert = self._get_set_from_text(
+            candidate.extensions.convert = self._get_set_from_text(
                 self.editors["convert"]
             )
-            self.config.extensions.passthrough = self._get_set_from_text(
+            candidate.extensions.passthrough = self._get_set_from_text(
                 self.editors["passthrough"]
             )
-            self.config.extensions.archive = self._get_set_from_text(
+            candidate.extensions.archive = self._get_set_from_text(
                 self.editors["archive"]
             )
-            self.config.extensions.document = self._get_set_from_text(
+            candidate.extensions.document = self._get_set_from_text(
                 self.editors["document"]
             )
-            self.config.extensions.misc_whitelist = self._get_set_from_text(
+            candidate.extensions.misc_whitelist = self._get_set_from_text(
                 self.editors["misc_whitelist"]
             )
-            self.config.extensions.system_junk = self._get_set_from_text(
+            candidate.extensions.system_junk = self._get_set_from_text(
                 self.editors["system_junk"]
             )
 
-            # Scanner
-            self.config.scanner.enable_ad_scan = self.ad_scan_var.get()
-            self.config.scanner.qr_whitelist = self._get_list_from_text(
+            candidate.scanner.enable_ad_scan = self.ad_scan_var.get()
+            candidate.scanner.qr_whitelist = self._get_list_from_text(
                 self.editors["qr"]
             )
 
-            self.manager.save(self.config)
+            # 持久化成功前不修改共享对象，也不切换日志处理器。
+            self.manager.save(candidate)
+            self._apply_config(candidate)
+
+            # 日志落盘开关：配置保存成功后立即生效，不必重启。
+            if candidate.app.enable_file_log:
+                log_path = setup_file_logging(self.config.config_dir)
+                if log_path:
+                    logger.info(f"📝 运行日志已开启: {log_path}")
+            else:
+                remove_file_logging()
+                logger.info("📝 运行日志已关闭（日志文件保留在磁盘上）")
+
             messagebox.showinfo(
                 "保存成功", "配置已保存！\n部分设置（如字体）可能需要重启软件才能生效。"
             )

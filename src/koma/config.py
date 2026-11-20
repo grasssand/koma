@@ -2,9 +2,12 @@ import logging
 import os
 import re
 import sys
+import tempfile
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 CONFIG_FILENAME = "config.toml"
 
@@ -39,20 +42,22 @@ TOML_TEMPLATE = """# ==========================================
 height = {app.height}
 width = {app.width}
 # 界面字体
-font = "{app.font}"
+font = {app_font}
 # 日志字体
-monospace_font = "{app.monospace_font}"
+monospace_font = {app_monospace_font}
 # 界面字体大小（整数）
 font_size = {app.font_size}
 # 文件列表字体大小（整数）
 list_font_size = {app.list_font_size}
+# 是否保存本地日志文件（路径: <配置目录>/logs/koma.log）
+enable_file_log = {app_enable_file_log_str}
 
 [converter]
 # 线程并发数
 # 设置为 0 则自动使用 CPU 核心数的 75%
 max_workers = {converter.max_workers}
 # 转换格式，可选: "avif (svt)", "avif (aom)", "webp", "jxl"
-format = "{converter.format}"
+format = {converter_format}
 # 质量 (1-100)
 quality = {converter.quality}
 # 无损模式
@@ -60,7 +65,7 @@ lossless = {converter_lossless_str}
 
 [deduplicator]
 # 查重文件夹/文件名解析正则
-comic_dir_regex = '''{deduplicator.comic_dir_regex}'''
+comic_dir_regex = {deduplicator_regex}
 
 [extensions]
 # 需要转换的格式
@@ -97,6 +102,8 @@ class AppConfig:
     monospace_font: str = "Maple Mono NF CN"
     font_size: int = 9
     list_font_size: int = 10
+    # 是否把运行日志写到 <配置目录>/logs/koma.log
+    enable_file_log: bool = True
 
     def __post_init__(self):
         if not isinstance(self.height, int) or self.height <= 0:
@@ -107,6 +114,8 @@ class AppConfig:
             self.font_size = 9
         if not isinstance(self.list_font_size, int) or self.list_font_size <= 0:
             self.list_font_size = 10
+        if not isinstance(self.enable_file_log, bool):
+            self.enable_file_log = True
 
 
 @dataclass
@@ -119,6 +128,12 @@ class ConverterConfig:
     custom_ext: str = ""
 
     def __post_init__(self):
+        if (
+            isinstance(self.max_workers, bool)
+            or not isinstance(self.max_workers, int)
+            or self.max_workers < 0
+        ):
+            self.max_workers = 0
         if self.format not in IMG_OUTPUT_FORMATS:
             self.format = "avif (svt)"
         if not (1 <= self.quality <= 100):
@@ -283,20 +298,88 @@ class GlobalConfig:
         return self.config_dir / "custom_ads"
 
 
+def _toml_string(value: str) -> str:
+    """将字符串编码为 TOML 基本字符串。"""
+    escapes = {
+        "\\": "\\\\",
+        '"': '\\"',
+        "\b": "\\b",
+        "\t": "\\t",
+        "\n": "\\n",
+        "\f": "\\f",
+        "\r": "\\r",
+    }
+    result = []
+    for char in str(value):
+        if char in escapes:
+            result.append(escapes[char])
+        elif ord(char) < 0x20 or ord(char) == 0x7F or 0xD800 <= ord(char) <= 0xDFFF:
+            result.append(f"\\u{ord(char):04x}")
+        else:
+            result.append(char)
+    return '"' + "".join(result) + '"'
+
+
+def _atomic_write(path: Path, content: str) -> None:
+    """写入临时文件并原子替换目标文件，失败时保留原文件。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=path.suffix,
+            delete=False,
+        ) as temporary:
+            temporary_path = Path(temporary.name)
+            temporary.write(content)
+            temporary.flush()
+            os.fsync(temporary.fileno())
+        os.replace(temporary_path, path)
+    except Exception:
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink()
+            except OSError:
+                pass
+        raise
+
+
 class ConfigManager:
     def __init__(self, filename: str = CONFIG_FILENAME):
         self.config_path = self._find_config_path(filename)
 
     @staticmethod
+    def _get_app_dir() -> Path:
+        """
+        程序所在目录。
+
+        - 打包版：exe 所在目录
+        - 源码运行：**项目根**（config.py → src/koma → src → 项目根）
+
+        旧实现用的是 `Path(__file__).parent.parent`，得到的是 `src/koma`，
+        而仓库根的 config.toml 在 `src/koma/../../` —— 结果只有 cwd 恰好是
+        仓库根时才会被读到，从别处启动会静默用默认配置。
+        """
+        if getattr(sys, "frozen", False):
+            return Path(sys.executable).parent
+        return Path(__file__).resolve().parents[2]
+
+    @staticmethod
     def _find_config_path(filename: str) -> Path:
         """
         定位配置文件路径。
-        优先级: 用户配置目录 > 程序所在目录 > 当前工作目录
+
+        优先级: KOMA_CONFIG 环境变量 > 用户配置目录 > 程序所在目录 > 当前工作目录
         """
-        if getattr(sys, "frozen", False):
-            app_dir = Path(sys.executable).parent
-        else:
-            app_dir = Path(__file__).parent.parent
+        # 环境变量显式指定时直接采用（便于测试与多实例）
+        env_override = os.environ.get("KOMA_CONFIG")
+        if env_override:
+            return Path(env_override)
+
+        app_dir = ConfigManager._get_app_dir()
 
         xdg_home = os.environ.get("XDG_CONFIG_HOME")
         user_config_dir = (
@@ -338,22 +421,32 @@ class ConfigManager:
             cfg.config_dir = self.config_path.parent
             return cfg
         except Exception as e:
-            logging.error(f"❌ 加载配置文件失败: {e}，将使用默认配置")
+            logger.error(f"❌ 加载配置文件失败: {e}，将使用默认配置")
             return self.get_default_config()
 
     def save(self, cfg: GlobalConfig) -> None:
-        """将配置对象保存到磁盘"""
+        """原子保存配置；校验或写入失败时保留原文件并向调用者抛出异常。"""
+        if (
+            isinstance(cfg.converter.max_workers, bool)
+            or not isinstance(cfg.converter.max_workers, int)
+            or cfg.converter.max_workers < 0
+        ):
+            raise ValueError("最大线程数必须是非负整数（0 表示自动）")
 
         def fmt_list(items) -> str:
-            quoted = [f'"{x}"' for x in sorted(items)]
+            quoted = [_toml_string(x) for x in sorted(items)]
             return "[\n    " + ",\n    ".join(quoted) + "\n]"
 
         # 使用模版填充数据
         content = TOML_TEMPLATE.format(
             app=cfg.app,
+            app_font=_toml_string(cfg.app.font),
+            app_monospace_font=_toml_string(cfg.app.monospace_font),
+            app_enable_file_log_str="true" if cfg.app.enable_file_log else "false",
             converter=cfg.converter,
+            converter_format=_toml_string(cfg.converter.format),
             converter_lossless_str="true" if cfg.converter.lossless else "false",
-            deduplicator=cfg.deduplicator,
+            deduplicator_regex=_toml_string(cfg.deduplicator.comic_dir_regex),
             scanner_enable_ad_str="true" if cfg.scanner.enable_ad_scan else "false",
             scanner_enable_custom_ad_str="true"
             if cfg.scanner.enable_custom_ad_scan
@@ -369,14 +462,11 @@ class ConfigManager:
             ext_junk=fmt_list(cfg.extensions.system_junk),
             scanner_qr=fmt_list(cfg.scanner.qr_whitelist),
         )
+        # 确保任何非法输入都在替换原文件之前失败。
+        tomllib.loads(content)
 
-        try:
-            self.config_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(self.config_path, "w", encoding="utf-8") as f:
-                f.write(content)
-            logging.info(f"💾 配置已保存至: {self.config_path}")
-        except Exception as e:
-            logging.error(f"❌ 保存配置失败: {e}")
+        _atomic_write(self.config_path, content)
+        logger.info(f"💾 配置已保存至: {self.config_path}")
 
     def get_default_config(self) -> GlobalConfig:
         """获取一份全新的默认配置"""

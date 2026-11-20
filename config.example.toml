@@ -3,9 +3,9 @@
 # ==========================================
 
 [app]
-# 窗口大小
-height = "800"
-width = "900"
+# 窗口大小（整数，不要加引号）
+height = 800
+width = 900
 # 界面字体
 font = "Noto Sans SC"
 # 日志字体
@@ -14,6 +14,8 @@ monospace_font = "Maple Mono NF CN"
 font_size = 9
 # 文件列表字体大小（整数）
 list_font_size = 10
+# 是否保存本地日志文件（路径: <配置目录>/logs/koma.log）
+enable_file_log = true
 
 [converter]
 # 线程并发数
@@ -25,6 +27,10 @@ format = "avif (svt)"
 quality = 75
 # 无损模式
 lossless = false
+
+[deduplicator]
+# 查重文件夹/文件名解析正则（必须包含 artist / title 命名分组，series 可选）
+comic_dir_regex = '''(\((?P<event>[^([]+)\))?\s*(\[(?P<artist>[^]]+)\])?\s*(?P<title>[^([]+)\s*(\((?P<series>[^[]+))?\s*(\[(?P<language>[^]]+)\])?\s*(?P<tail>.*)?'''
 
 [extensions]
 # 需要转换的格式

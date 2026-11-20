@@ -17,7 +17,7 @@ from koma.ui.rename_tab import RenameTab
 from koma.ui.scan_tab import SacnTab
 from koma.ui.settings import SettingsDialog
 from koma.ui.utils import TextHandler, get_monospace_font, get_sans_font
-from koma.utils import get_default_formatter, logger
+from koma.utils import get_default_formatter, logger, setup_file_logging
 
 
 class KomaGUI:
@@ -136,7 +136,7 @@ class KomaGUI:
         style.configure(".", font=(self.config.app.font, self.config.app.font_size))
 
     def _setup_logging_redirect(self):
-        """将标准 logging 输出重定向到 UI 文本框"""
+        """将标准 logging 输出同时送到 UI 文本框、控制台与日志文件"""
         root_logger = logging.getLogger()
         root_logger.handlers.clear()
         root_logger.setLevel(logging.INFO)
@@ -150,6 +150,14 @@ class KomaGUI:
         console_handler = logging.StreamHandler(sys.stdout)
         console_handler.setFormatter(formatter)
         root_logger.addHandler(console_handler)
+
+        # 落盘：打包版 console=False，没有文件日志的话窗口一关就无从排查
+        if self.config.app.enable_file_log:
+            log_path = setup_file_logging(self.config.config_dir)
+            if log_path:
+                logger.info(f"📝 运行日志: {log_path}")
+        else:
+            logger.info("📝 本地日志文件已关闭（设置 → 常规 可开启）")
 
     def _open_settings(self):
         """打开全局设置对话框"""
